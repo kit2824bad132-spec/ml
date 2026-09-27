@@ -1,56 +1,60 @@
 ================================================================================
-AMAZON ML CHALLENGE 2026 - CLEANUP REPORT
+AMAZON ML CHALLENGE 2026 - CLEANUP REPORT (POST-RUN & GIT SYNC)
 ================================================================================
 Generated: 2026-09-27
 Workspace: C:\Amazon ML challenge\Amazon ML challenge
 
-LATEST RUN FILES KEPT:
-- output/matching_results.tsv (293,150,728 bytes, current leaderboard 0.488 submission)
-- output/model_lightgbm.pkl (1,725,213 bytes, LightGBM model, threshold: 0.760)
-- output/matching_results_final_improved_20260926_230951.tsv (104,806,117 bytes, latest validated run)
-- output/candidate_pairs_final_improved_20260926_230951.tsv (968,945,050 bytes)
-- output/candidate_pairs_lightgbm.tsv (968,945,050 bytes)
-- output/candidate_pairs.tsv (913,547,628 bytes)
-- output/lightgbm_inference_log.txt (194,474 bytes)
-- run_full_test_pipeline.ps1 (4,682 bytes)
-- run_inference_duckdb.py (6,372 bytes)
-- run_inference.py (6,625 bytes)
-- src/bucket_blocking_lightgbm.py (6,081 bytes)
-- src/train_model_lightgbm.py (3,686 bytes)
-- src/clean_validation_train_evaluate.py (23,819 bytes)
-- dataset/train/clean_validation_model_improved.pkl (57,199,943 bytes)
-- dataset/train/features_combined_50k.tsv (38,004,698 bytes)
+1. ACTIVE PRODUCTION PIPELINE & LATEST RUN FILES KEPT:
+- output/matching_results.tsv (83,950,130 bytes, 1,732,544 rows - All-Time High Leaderboard 0.516, T=0.975)
+- output/candidate_pairs_final_improved_20260926_230951.tsv (968,945,050 bytes - 73.3M candidate pairs used for inference)
+- output/model_lightgbm.pkl (1,725,213 bytes, LightGBM trained classifier)
+- dataset/train/clean_validation_model_improved.pkl (57,199,943 bytes, RandomForest hard-negative classifier)
 - dataset/test/test_source1.tsv (175,022,086 bytes)
 - dataset/test/test_source2.tsv (509,456,422 bytes)
 - dataset/test/test_source3.tsv (506,002,772 bytes)
-- All clean validation & experiment reports in output/ and dataset/train/
+- dataset/train/train_source1.tsv (210,069,713 bytes)
+- dataset/train/train_source2.tsv (489,301,488 bytes)
+- dataset/train/train_source3.tsv (503,705,637 bytes)
+- dataset/train/train_ground_truth.tsv (127,015,583 bytes)
+- run_full_test_pipeline.ps1 (Active automated execution script)
+- run_inference_duckdb.py (DuckDB streaming runner)
+- run_inference.py (Standard reference runner)
+- src/run_test_inference_optimized.py (Optimized 125k pairs/sec test inference engine)
+- src/bucket_blocking_lightgbm.py (Multi-pass country-bounded candidate generation)
+- src/preprocessing.py (Unicode NFKC normalization module)
+- src/clean_validation_train_evaluate.py (Model training & validation engine)
+- All audit & optimization benchmark reports in output/ (*.txt, *.json, *.csv)
+- README.md & .gitignore (Synchronized with GitHub repository)
 
-OLD FILES REMOVED:
-- output/matching_results 1.tsv (261,509,403 bytes, ~249.39 MB - superseded preliminary run output)
-- output/inference_log.txt (2,804 bytes - superseded preliminary run log)
-
-TEMP FILES REMOVED:
-- output/matching_results_previous.tsv (293,150,728 bytes, ~279.57 MB - exact duplicate backup of output/matching_results.tsv)
-- clean_final_inference_20260926_230951.duckdb (1,974,480,896 bytes, ~1.88 GB - scratch database from latest run)
-- inference_temp.duckdb (3,858,509,824 bytes, ~3.68 GB - old scratch database)
-- lightgbm_blocking.duckdb (741,355,520 bytes, ~707 MB - old scratch blocking database)
-- lightgbm_blocking_final_improved.duckdb & .wal (633,050,103 bytes, ~604 MB - scratch database)
-- lightgbm_blocking_final_improved_20260926_230951.duckdb (749,481,984 bytes, ~715 MB - scratch blocking database)
-- lightgbm_inference.duckdb (5,928,136,704 bytes, ~5.65 GB - old scratch inference database)
-- production_inference.duckdb & .wal (1,938,696,060 bytes, ~1.85 GB - scratch database)
-- run_production_inference.py (13,901 bytes - temporary scratch test script)
-- __pycache__/ (Python bytecode cache)
+2. UNUSED / OLD FILES REMOVED (TOTAL SPACE FREED: ~5.33 GB):
+- dataset/blocking.duckdb (~2.16 GB, 2,319,462,400 bytes - old scratch database)
+- dataset/train_source1.tsv (0 bytes - empty redundant file)
+- output/candidate_pairs.tsv (~871 MB, 913,547,628 bytes - superseded preliminary candidate set)
+- output/candidate_pairs_lightgbm.tsv (~924 MB, 968,945,050 bytes - exact duplicate of candidate_pairs_final_improved)
+- output/matching_results_improved_model_0975.tsv (~80 MB, 83,950,130 bytes - exact duplicate of matching_results.tsv)
+- output/matching_results_lightgbm_076.tsv (~282 MB, 295,868,850 bytes - superseded threshold 0.76 run)
+- output/matching_results_lightgbm_optimized.tsv (~123 MB, 129,070,091 bytes - superseded preliminary run)
+- output/matching_results_final_improved_20260926_230951.tsv (~100 MB, 104,806,117 bytes - superseded un-optimized run)
+- 27 old intermediate & experimental files in dataset/train/ (~491 MB freed):
+    * clean_blocking_candidates_strat4.tsv, clean_blocking_candidates_strat5.tsv
+    * clean_blocking_candidates_selective.tsv, clean_blocking_candidates_mult_pass.tsv
+    * clean_blocking_pass_candidates.tsv.gz
+    * clean_validation_calibration_assessment_split.tsv, clean_validation_candidates.tsv
+    * clean_validation_labeled_candidates.tsv, clean_validation_model_baseline.pkl
+    * clean_validation_split.tsv, clean_validation_training_features_baseline.tsv
+    * clean_validation_training_features_improved.tsv, clean_validation_training_pairs_baseline.tsv
+    * clean_validation_training_pairs_improved.tsv, clean_validation_validation_features.tsv
+    * features_50k.tsv, features_combined_50k.tsv
+    * hard_negative_features_50k.tsv, hard_negative_features_experiment.tsv
+    * hard_negative_pairs_50k.tsv, hard_negative_pairs_experiment.tsv
+    * model_hard.pkl, model_hard_negative_experiment.pkl
+    * train_source1_sample_50k.tsv, train_source2_matches_50k.tsv, train_source3_matches_50k.tsv
+    * training_pairs_50k.tsv
 - src/__pycache__/ (Python bytecode cache)
 
-UNKNOWN FILES KEPT:
-- None (all workspace files were positively identified and classified)
-
-CURRENT MODEL:
-output/model_lightgbm.pkl
-
-CURRENT OUTPUT:
-output/matching_results.tsv
-
-CURRENT LEADERBOARD RESULT:
-0.488
+3. REPOSITORY STATUS:
+- GitHub: Synchronized with https://github.com/kit2824bad132-spec/ml.git (branch main)
+- Active Model: dataset/train/clean_validation_model_improved.pkl
+- Active Output: output/matching_results.tsv (83.9 MB, 1,732,544 rows, Leaderboard 0.516)
+- Workspace State: Clean, optimized, and free of redundant clutter.
 ================================================================================
