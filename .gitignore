@@ -1,0 +1,22 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# DuckDB Scratch Databases
+*.duckdb
+*.duckdb.wal
+
+# Large Datasets (> 100 MB hard limit on GitHub)
+dataset/
+output/candidate_pairs*.tsv
+output/matching_results_lightgbm_076.tsv
+output/matching_results_lightgbm_optimized.tsv
+output/matching_results_final_improved_20260926_230951.tsv
+output/matching_results_improved_model_0975.tsv
+output/clean_validation_validation_features.tsv

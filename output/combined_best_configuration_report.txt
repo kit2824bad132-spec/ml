@@ -1,0 +1,30 @@
+================================================================================
+AMAZON ML CHALLENGE 2026 - COMBINED BEST CONFIGURATION REPORT
+================================================================================
+CONFIGURATION:
+Model Artifact: dataset/train/clean_validation_model_improved.pkl
+Blocking Strategy: Selective Multi-Pass Blocking (4 country passes + 2 token-co-occurrence passes)
+Candidate File: dataset/train/clean_blocking_candidates_selective.tsv
+Decision Threshold: 0.97
+
+CLEAN VALIDATION METRICS:
+Baseline F0.5: 0.900691 (Candidate-Level) / 0.845879 (End-to-End)
+Final Candidate F0.5: 0.968007
+Final End-to-End F0.5: 0.954025
+Candidate F0.5 Improvement: +0.067316
+End-to-End F0.5 Improvement: +0.108146
+
+Candidate Recall: 0.936672 (93.67% vs Baseline 73.89%)
+Precision: 0.988727 (98.87%)
+Recall (Model): 0.893138 (89.31%)
+End-to-End Recall: 0.836577 (83.66%)
+False Positives: 172
+False Negatives (Model): 1,805
+False Negatives (Blocking): 1,142
+Total False Negatives: 2,947
+
+CANDIDATE STATISTICS:
+Total Candidates: 412,508
+Average Candidates per Source-1: 41.25
+Maximum Candidates per Source-1: 295
+================================================================================

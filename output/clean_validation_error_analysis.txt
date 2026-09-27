@@ -1,0 +1,156 @@
+================================================================================
+AMAZON ML CHALLENGE 2026 - CLEAN VALIDATION ERROR ANALYSIS
+================================================================================
+Model: dataset/train/clean_validation_model_improved.pkl
+Candidate File: dataset/train/clean_blocking_candidates_selective.tsv
+Threshold: 0.97
+Total True Matches: 18,033
+Total Errors (A + B + C): 3,119
+--------------------------------------------------------------------------------
+
+ERROR CATEGORY BREAKDOWN:
+  A_TRUE_MATCH_NOT_IN_CANDIDATES     :  1,142 ( 36.6% of primary errors)
+  B_TRUE_MATCH_LOW_MODEL_SCORE       :  1,805 ( 57.9% of primary errors)
+  C_WRONG_HIGH_CONFIDENCE_MATCH      :    172 (  5.5% of primary errors)
+  D_MULTIPLE_PLAUSIBLE_MATCHES       :  4,169
+  E_NO_MATCH_SOURCE1_CASES           :  2,489
+  E_UNPREDICTED_SOURCE1_CASES        :  3,030
+  F_MISSING_OR_SHORT_NAME            :      0
+  G_MISSING_OR_SHORT_ADDRESS         :    671
+  H_NAME_ADDRESS_CONFLICT            :    633
+
+--------------------------------------------------------------------------------
+REPRESENTATIVE ERROR EXAMPLES:
+
+--- A_TRUE_MATCH_NOT_IN_CANDIDATES ---
+Sample 1:
+  s1_id: S1-407126793
+  c_id: S2-510771636
+  s_name: Digital Software Private Limited
+  c_name: डिजिटल सॉफ्टवेयर प्राइवेट लिमिटेड
+  s_addr: 11, Floor-Grd, Dholakawala Chawl, Shivdas Champsi Marg, Mazgaon, Mumbai, Mumbai City, Maharashtra
+  c_addr: ##11, BOMBAY, MUMBAI CITY, महाराष्ट्र
+  s_country: india
+  c_country: india
+Sample 2:
+  s1_id: S1-856021113
+  c_id: S2-593843185
+  s_name: Best Projects Limited
+  c_name: ബെസ്റ്റ് പ്രോജക്ട്സ് ലിമിറ്റഡ്
+  s_addr: C/O Franclin Desayose, 2706/8, Alby Cottage, Thennoorkonam, Kottapuram P.O., Thiruvananthapuram, Neyyattinkara, Thiruvananthapuram, Trivandrum, Kerala
+  c_addr: C/O FRANCLIN DESAYOSE, THIRUVANANTHAPURAM, VIZHINJAM, Kerala
+  s_country: india
+  c_country: india
+Sample 3:
+  s1_id: S1-355078191
+  c_id: S3-732054872
+  s_name: Oswal & Co
+  c_name: Smt Oswal & Có
+  s_addr: 2/209/2 6Th Street, Sakthi Ngr, Iyer Bungalow, Madurai North, Madurai, Tamil Nadu
+  c_addr: 2/209/2 6Th Street, Madurai North, Madurai, தமிழ்நாடு
+  s_country: india
+  c_country: india
+Sample 4:
+  s1_id: S1-655745552
+  c_id: S3-389021190
+  s_name: Apb Future Private Limited
+  c_name: Dr Apb Future Private
+  s_addr: G-21 Sector-44, Noida, Gautam Buddha Nagar, Uttar Pradesh
+  c_addr: G-21 Sector-44, Gautam Buddha Nagar, Noida, UP
+  s_country: india
+  c_country: india
+Sample 5:
+  s1_id: S1-999437480
+  c_id: S3-186066518
+  s_name: Golden Lakshmi Estate Private Limited
+  c_name: गोल्डन लक्ष्मी एस्टेट प्राइवेट लिमिटेड
+  s_addr: Flat No B 301, 3Rd Floor, Mahavir Bldg, Plot No 165 Derasar Lane, Ghatkopar East, Mumbai, Mumbai City, Maharashtra
+  c_addr: Flat No B 301, Mumbai City, New Bombay, MH
+  s_country: india
+  c_country: india
+
+--- B_TRUE_MATCH_LOW_MODEL_SCORE ---
+Sample 1:
+  s1_id: S1-100953241
+  c_id: S2-39960047
+  prob: 0.7147700531458518
+  s_name: East It Pvt Ltd
+  c_name: ഈസ്റ്റ് ഐടി പ്രൈവറ്റ് ലിമിറ്റഡ്
+  s_addr: K P 14/173, Kinavakkal, Kuthuparamba, Thalassery, Kannur, Kerala
+  c_addr: K P 14/173, THALASSERY, KANNUR, Kerala
+Sample 2:
+  s1_id: S1-100953241
+  c_id: S3-968009517
+  prob: 0.6585623605122821
+  s_name: East It Pvt Ltd
+  c_name: ഈസ്റ്റ് ഐടി പ്രൈവറ്റ് ലിമിറ്റഡ്
+  s_addr: K P 14/173, Kinavakkal, Kuthuparamba, Thalassery, Kannur, Kerala
+  c_addr: K P #14/173, Kinavakkal, Kuthuparamba, Kannur, കേരളം
+Sample 3:
+  s1_id: S1-101309779
+  c_id: S2-995352905
+  prob: 0.9408780248135902
+  s_name: Cdg & Co
+  c_name: M/s Cdg & &
+  s_addr: New No.32-B G/F (Old No.32-E) Gharonda Neem Ka Bangar, Delhi, East Delhi, Delhi
+  c_addr: NEW NO.C-32-B G/F (OLD NO.32-E) GHARONDA NEEM KA BANGAR, DELHI, दिल्ली
+Sample 4:
+  s1_id: S1-101309779
+  c_id: S3-849624127
+  prob: 0.9680606158686011
+  s_name: Cdg & Co
+  c_name: cdg co &
+  s_addr: New No.32-B G/F (Old No.32-E) Gharonda Neem Ka Bangar, Delhi, East Delhi, Delhi
+  c_addr: 
+Sample 5:
+  s1_id: S1-101827246
+  c_id: S3-71417813
+  prob: 0.9459251257293259
+  s_name: Great First Jaws
+  c_name: Great First Jaws
+  s_addr: 1147 Oleson Road, Waterloo, IA
+  c_addr: 
+
+--- C_WRONG_HIGH_CONFIDENCE_MATCH ---
+Sample 1:
+  s1_id: S1-100097411
+  c_id: S2-413954957
+  prob: 0.9866642910226405
+  s_name: Bangalore Superspeciality Private Limited
+  c_name: ... Bangalore Infra Private (Limited) (Limited)
+  s_addr: D-109 Raja Rajeshwari Nivas Vajpayee Nagar Bommanahalli, Bangalore, Karnataka
+  c_addr: NO.921, BANGALORE, Karnataka
+Sample 2:
+  s1_id: S1-102971431
+  c_id: S2-893187225
+  prob: 0.9980552734936979
+  s_name: Delhi Hospitality Private Limited
+  c_name: DELHI KAILAS PRIVATE LIMITED
+  s_addr: West Delhi, Delhi, 25/2-W-1 West Patel Nagar
+  c_addr: 20/36-D, G/F, WEST PATEL NAGAR, DELHI, Delhi
+Sample 3:
+  s1_id: S1-103208993
+  c_id: S3-458256793
+  prob: 0.9763188496030495
+  s_name: Forge
+  c_name: Forge, LLC Trading
+  s_addr: 746 Lafayette Avenue, Buffalo, NY
+  c_addr: 
+Sample 4:
+  s1_id: S1-103682812
+  c_id: S2-34620368
+  prob: 0.970801160128145
+  s_name: Sterling
+  c_name: Sterling Materials (Advisors)
+  s_addr: 669 Harrell Street, Memphis, TN
+  c_addr: 
+Sample 5:
+  s1_id: S1-103682812
+  c_id: S2-998708855
+  prob: 0.9849714665334671
+  s_name: Sterling
+  c_name: Sterling Braemar  Inc
+  s_addr: 669 Harrell Street, Memphis, TN
+  c_addr: 
+
+================================================================================

@@ -1,0 +1,74 @@
+================================================================================
+AMAZON ML CHALLENGE 2026 - HARD NEGATIVE AUDIT
+================================================================================
+Date: 2026-09-27
+Script Audited: src/clean_validation_prepare.py / src/experiment_hard_negatives.py
+
+1. GENERATION METHOD & SOURCE DATA
+--------------------------------------------------------------------------------
+- Hard negatives are generated exclusively from the 40,000 training Source-1 entities.
+- Zero validation Source-1 entities or validation labels are accessed during generation (0% leakage).
+- All candidates come from the unified target dataset (Source-2 + Source-3 matches).
+
+2. INDEXING & RETRIEVAL (BLOCKING KEYS FOR NEGATIVES)
+--------------------------------------------------------------------------------
+- Inverted Token Index built on tokens of length >= 2 for both 'name' and 'address'.
+- High-frequency stop tokens filtered (frequency > 5,000 ignored).
+- Candidates ranked via IDF token-overlap score: weight = 1.0 / log2(frequency + 2).
+- Candidate shortlist: Top 300 candidates per training Source-1 entity.
+
+3. HARD NEGATIVE CATEGORIES & SELECTION CRITERIA
+--------------------------------------------------------------------------------
+A) Name Confusion:
+   - Condition: name_ratio >= 0.60 AND address_ratio <= 0.70
+   - Target: Businesses with matching/similar names operating at different addresses.
+   - Priority: Top-1 highest name similarity.
+
+B) Address Confusion:
+   - Condition: address_ratio >= 0.60 AND name_ratio <= 0.75
+   - Target: Different businesses operating at the same or nearby address (e.g. malls, complexes).
+   - Priority: Top-1 highest address similarity.
+
+C) Country Confusion:
+   - Condition: country_1 != country_2 AND name_ratio >= 0.60
+   - Target: Transnational entity confusion where same brand/name appears in conflicting countries.
+   - Priority: Top-1 highest name similarity with explicit country conflict.
+
+4. QUANTITATIVE ANALYSIS & DATASET RATIOS
+--------------------------------------------------------------------------------
+- Total Training Positives: 72,777 pairs
+- Total Training Negatives: 167,010 pairs
+  * Random Negatives: 80,000 pairs (2 per S1)
+  * Hard Negatives: 87,010 pairs (~2.18 per S1)
+- Negative-to-Positive Ratio: 2.295 : 1 (approx 2.3 : 1)
+- Hard Negative to Positive Ratio: 1.196 : 1 (approx 1.2 : 1)
+
+5. DIFFICULTY & SIMILARITY EVALUATION (LEGACY VS IMPROVED)
+--------------------------------------------------------------------------------
+Legacy Hard Negatives (random-100 sample + top name ratio):
+- Total rows: 79,997
+- Mean Name Ratio: ~0.51
+- Name Ratio >= 0.80 rate: 0.67% (almost no genuinely hard name negatives!)
+- Address Ratio >= 0.80 rate: 0.00%
+- Problem: Dominated by trivial, easy negatives.
+
+Improved Hard Negatives (targeted token shortlist + category rules):
+- Total rows: 87,010
+- Mean Name Ratio: ~0.65
+- Name Ratio >= 0.80 rate: 22.92% (over 34x increase in difficult name negatives!)
+- Address Ratio >= 0.80 rate: 4.29%
+- Genuinely challenging: Forces decision trees to learn nuanced address and name differences.
+
+6. DUPLICATION & LEAKAGE CHECKS
+--------------------------------------------------------------------------------
+- Duplicate pairs within training set: 0 (enforced via drop_duplicates on source1_id, candidate_id)
+- Validation Source-1 ID overlap: 0
+- Validation Ground Truth overlap: 0
+- Matched Target ID overlap between train and validation: 0
+
+7. RECOMMENDATIONS FOR FURTHER IMPROVEMENT (PHASES 8-9)
+--------------------------------------------------------------------------------
+1. Increase representation of numeric address mismatches (e.g., Suite/Unit # differences).
+2. Test hard-negative ratios: 1:1, 1:2, 1:3, 1:5.
+3. Test combinations of hard negatives with selective multi-pass blocking.
+================================================================================

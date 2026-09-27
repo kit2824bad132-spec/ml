@@ -1,0 +1,109 @@
+================================================================================
+AMAZON ML CHALLENGE 2026 - LATEST RUN AUDIT & LINEAGE TRACE
+================================================================================
+Generated: 2026-09-27
+Workspace: C:\Amazon ML challenge\Amazon ML challenge
+
+1. LINEAGE TRACE (LATEST RUNS & CURRENT LEADERBOARD 0.488)
+--------------------------------------------------------------------------------
+The project contains two key production runs:
+A) Primary Submission Run (Leaderboard 0.488):
+   - Model: output/model_lightgbm.pkl (LGBMClassifier, threshold 0.760)
+   - Training Script: src/train_model_lightgbm.py
+   - Feature Source: dataset/train/features_combined_50k.tsv
+   - Blocking Script: src/bucket_blocking_lightgbm.py
+   - Inference Script: run_inference_duckdb.py
+   - Candidate Input: output/candidate_pairs.tsv / output/candidate_pairs_lightgbm.tsv
+   - Output File: output/matching_results.tsv (293,150,728 bytes, 1,732,544 rows)
+   - Log: output/lightgbm_inference_log.txt (26-09-2026 15:56:01)
+
+B) Validated Improved Hard-Negative Run (Local Validation F0.5 = 0.900691):
+   - Model: dataset/train/clean_validation_model_improved.pkl (RandomForest, threshold 0.70)
+   - Evaluated / Validated in: src/clean_validation_train_evaluate.py
+   - Candidate File: output/candidate_pairs_final_improved_20260926_230951.tsv (968,945,050 bytes)
+   - Output File: output/matching_results_final_improved_20260926_230951.tsv (104,806,117 bytes)
+   - Runner: run_full_test_pipeline.ps1 (26-09-2026 23:09:51 to 27-09-2026 00:03:34)
+
+2. EXACT INPUT FILES (PRESERVED)
+--------------------------------------------------------------------------------
+- dataset/test/test_source1.tsv (175,022,086 bytes, 1,732,544 rows)
+- dataset/test/test_source2.tsv (509,456,422 bytes, 4,887,273 rows)
+- dataset/test/test_source3.tsv (506,002,772 bytes, 5,082,316 rows)
+
+3. EXACT CANDIDATE FILES (PRESERVED)
+--------------------------------------------------------------------------------
+- output/candidate_pairs_final_improved_20260926_230951.tsv (968,945,050 bytes, 73,297,852 links)
+- output/candidate_pairs_lightgbm.tsv (968,945,050 bytes)
+- output/candidate_pairs.tsv (913,547,628 bytes, 68,993,081 links)
+
+4. EXACT FEATURE & TRAINING FILES (PRESERVED IN dataset/train/)
+--------------------------------------------------------------------------------
+- dataset/train/features_combined_50k.tsv (38,004,698 bytes)
+- dataset/train/features_50k.tsv (25,039,885 bytes)
+- dataset/train/clean_validation_training_features_improved.tsv (35,491,665 bytes)
+- dataset/train/clean_validation_training_features_baseline.tsv (34,817,351 bytes)
+- dataset/train/clean_validation_validation_features.tsv (111,333,443 bytes)
+- dataset/train/training_pairs_50k.tsv (5,490,857 bytes)
+- dataset/train/clean_validation_training_pairs_improved.tsv (10,287,007 bytes)
+- dataset/train/clean_validation_training_pairs_baseline.tsv (10,313,375 bytes)
+- dataset/train/train_ground_truth.tsv (127,015,583 bytes)
+- dataset/train/train_source1.tsv (210,069,713 bytes)
+- dataset/train/train_source1_sample_50k.tsv (4,801,889 bytes)
+- dataset/train/train_source2.tsv (489,301,488 bytes)
+- dataset/train/train_source2_matches_50k.tsv (4,237,553 bytes)
+- dataset/train/train_source3.tsv (503,705,637 bytes)
+- dataset/train/train_source3_matches_50k.tsv (4,414,595 bytes)
+
+5. EXACT HARD-NEGATIVE FILES (PRESERVED IN dataset/train/)
+--------------------------------------------------------------------------------
+- dataset/train/hard_negative_features_50k.tsv (13,442,308 bytes)
+- dataset/train/hard_negative_features_experiment.tsv (17,518,116 bytes)
+- dataset/train/hard_negative_pairs_50k.tsv (4,517,471 bytes)
+- dataset/train/hard_negative_pairs_experiment.tsv (7,400,293 bytes)
+
+6. EXACT MODEL FILES (PRESERVED)
+--------------------------------------------------------------------------------
+- output/model_lightgbm.pkl (1,725,213 bytes, LGBMClassifier, threshold: 0.760)
+- dataset/train/clean_validation_model_improved.pkl (57,199,943 bytes, RandomForest, threshold: 0.70)
+- dataset/train/clean_validation_model_baseline.pkl (18,320,327 bytes)
+- dataset/train/model_hard.pkl (10,678,215 bytes)
+- dataset/train/model_hard_negative_experiment.pkl (57,093,384 bytes)
+
+7. EXACT OUTPUT FILES (PRESERVED)
+--------------------------------------------------------------------------------
+- output/matching_results.tsv (293,150,728 bytes, current leaderboard 0.488 submission)
+- output/matching_results_final_improved_20260926_230951.tsv (104,806,117 bytes, latest validated run)
+- output/clean_validation_report.json (14,591 bytes)
+- output/clean_validation_label_audit.json (868 bytes)
+- output/clean_validation_error_cases.tsv (119,285 bytes)
+- output/clean_blocking_experiment_report.json (19,719 bytes)
+- output/clean_blocking_generation_report.json (6,480 bytes)
+- output/clean_blocking_selective_generation_report.json (536 bytes)
+- output/hard_negative_experiment_report.json (2,584 bytes)
+- output/lightgbm_inference_log.txt (194,474 bytes)
+
+8. DATABASE FILES
+--------------------------------------------------------------------------------
+- All temporary scratch DuckDB files were purged during pre-flight database cleanup (~15.82 GB freed).
+- Test candidate and matching tables are stored in TSV formats for permanence and portability.
+
+9. FILES IDENTIFIED AS OLD EXPERIMENTS (CONFIRMED FOR REMOVAL)
+--------------------------------------------------------------------------------
+- output/matching_results 1.tsv (261,509,403 bytes, created 26-09-2026 13:20:04, superseded early preliminary run)
+- output/inference_log.txt (2,804 bytes, created 26-09-2026 10:22:17, early superseded log)
+
+10. FILES IDENTIFIED AS TEMPORARY (CONFIRMED FOR REMOVAL)
+--------------------------------------------------------------------------------
+- output/matching_results_previous.tsv (293,150,728 bytes, exact duplicate copy of output/matching_results.tsv created as temporary pre-inference backup)
+- src/__pycache__/*.pyc (Compiled Python bytecode cache files)
+- __pycache__/*.pyc (Compiled Python bytecode cache files)
+
+11. FILES KEPT
+--------------------------------------------------------------------------------
+- All source code in src/, run_inference_duckdb.py, run_inference.py, run_full_test_pipeline.ps1
+- All datasets in dataset/test/ and dataset/train/
+- All trained models (output/model_lightgbm.pkl, dataset/train/clean_validation_model_improved.pkl, etc.)
+- All current output results (output/matching_results.tsv, output/matching_results_final_improved_20260926_230951.tsv)
+- All candidate sets (output/candidate_pairs_final_improved_20260926_230951.tsv, candidate_pairs_lightgbm.tsv, candidate_pairs.tsv)
+- All experiment validation reports and audit logs
+================================================================================

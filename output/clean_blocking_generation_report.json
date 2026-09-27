@@ -1,0 +1,181 @@
+{
+  "validation_source1_ids": 10000,
+  "candidate_generation_used_ground_truth": false,
+  "current_candidate_pairs": 396850,
+  "current_candidate_average_per_source1": 39.685,
+  "current_candidate_maximum_per_source1": 295,
+  "current_rules_reconstructed_exactly": true,
+  "new_union_candidate_pairs": 2016876,
+  "new_union_additional_pairs": 1620026,
+  "new_union_growth_ratio": 5.082212422829785,
+  "new_union_average_per_source1": 201.6876,
+  "new_union_maximum_per_source1": 699,
+  "max_block_size": 250,
+  "max_token_pass_candidates_per_source": 200,
+  "pass_file": "dataset/train/clean_blocking_pass_candidates.tsv.gz",
+  "union_file": "dataset/train/clean_blocking_candidates_mult_pass.tsv",
+  "passes": [
+    {
+      "strategy": "current_exact_name_country",
+      "candidate_pairs": 4953,
+      "average_candidates_per_source1": 0.4953,
+      "maximum_candidates_per_source1": 16,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "current_prefix6_country",
+      "candidate_pairs": 331089,
+      "average_candidates_per_source1": 33.1089,
+      "maximum_candidates_per_source1": 235,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "current_first_name_token_country",
+      "candidate_pairs": 344317,
+      "average_candidates_per_source1": 34.4317,
+      "maximum_candidates_per_source1": 221,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "current_postal_pin_country",
+      "candidate_pairs": 1098,
+      "average_candidates_per_source1": 0.1098,
+      "maximum_candidates_per_source1": 12,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "exact_name_any_country",
+      "candidate_pairs": 4960,
+      "average_candidates_per_source1": 0.496,
+      "maximum_candidates_per_source1": 16,
+      "additional_pairs_to_union": 7,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "rare_name_token_country",
+      "candidate_pairs": 889391,
+      "average_candidates_per_source1": 88.9391,
+      "maximum_candidates_per_source1": 200,
+      "additional_pairs_to_union": 695081,
+      "token_strategy_per_source_cap": 200,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "rare_address_token_country",
+      "candidate_pairs": 904893,
+      "average_candidates_per_source1": 90.4893,
+      "maximum_candidates_per_source1": 200,
+      "additional_pairs_to_union": 888170,
+      "token_strategy_per_source_cap": 200,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "house_number_address_token_country",
+      "candidate_pairs": 23224,
+      "average_candidates_per_source1": 2.3224,
+      "maximum_candidates_per_source1": 103,
+      "additional_pairs_to_union": 703,
+      "token_strategy_per_source_cap": 200,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "name_token_address_token_country",
+      "candidate_pairs": 13689,
+      "average_candidates_per_source1": 1.3689,
+      "maximum_candidates_per_source1": 25,
+      "additional_pairs_to_union": 16,
+      "token_strategy_per_source_cap": 200,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "address_tail_city_token_country",
+      "candidate_pairs": 342136,
+      "average_candidates_per_source1": 34.2136,
+      "maximum_candidates_per_source1": 200,
+      "additional_pairs_to_union": 36049,
+      "token_strategy_per_source_cap": 200,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "separate_source2_current_exact_name_country",
+      "candidate_pairs": 2389,
+      "average_candidates_per_source1": 0.2389,
+      "maximum_candidates_per_source1": 7,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "separate_source2_current_prefix6_country",
+      "candidate_pairs": 158758,
+      "average_candidates_per_source1": 15.8758,
+      "maximum_candidates_per_source1": 112,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "separate_source2_current_first_name_token_country",
+      "candidate_pairs": 163283,
+      "average_candidates_per_source1": 16.3283,
+      "maximum_candidates_per_source1": 107,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "separate_source2_current_postal_pin_country",
+      "candidate_pairs": 524,
+      "average_candidates_per_source1": 0.0524,
+      "maximum_candidates_per_source1": 7,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "separate_source3_current_exact_name_country",
+      "candidate_pairs": 2564,
+      "average_candidates_per_source1": 0.2564,
+      "maximum_candidates_per_source1": 9,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "separate_source3_current_prefix6_country",
+      "candidate_pairs": 172331,
+      "average_candidates_per_source1": 17.2331,
+      "maximum_candidates_per_source1": 124,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "separate_source3_current_first_name_token_country",
+      "candidate_pairs": 181034,
+      "average_candidates_per_source1": 18.1034,
+      "maximum_candidates_per_source1": 117,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    },
+    {
+      "strategy": "separate_source3_current_postal_pin_country",
+      "candidate_pairs": 574,
+      "average_candidates_per_source1": 0.0574,
+      "maximum_candidates_per_source1": 6,
+      "additional_pairs_to_union": 0,
+      "token_strategy_per_source_cap": null,
+      "maximum_block_size": 250
+    }
+  ]
+}

@@ -1,0 +1,190 @@
+================================================================================
+AMAZON ML CHALLENGE 2026 - FINAL OPTIMIZATION REPORT (UPDATED)
+================================================================================
+Date: 2026-09-27
+Environment: Windows (12 CPU cores)
+Evaluation Split: dataset/train/clean_validation_split.tsv (10,000 Validation S1 entities)
+Ground Truth Matches: 18,033 true target matches
+
+1. ORIGINAL LEADERBOARD
+--------------------------------------------------------------------------------
+Score: 0.206 (Initial submission)
+
+2. LATEST LEADERBOARD
+--------------------------------------------------------------------------------
+Score: 0.488 (Production LightGBM pipeline run)
+
+3. ORIGINAL CLEAN VALIDATION (BASELINE AUDIT)
+--------------------------------------------------------------------------------
+- Model: RandomForestClassifier (250 trees, max_depth=14, min_samples_leaf=3)
+  File: dataset/train/clean_validation_model_improved.pkl
+- Threshold: 0.70
+- Features: 9 RapidFuzz similarity features
+- Blocking: 4-pass country-bounded blocking
+- Candidate File: dataset/train/clean_validation_candidates.tsv (396,850 candidate pairs)
+- Total Validation True Matches: 18,033
+- True Matches in Candidates: 13,324 (Candidate Recall: 73.8868%)
+- Candidate-Level Precision: 0.882321 (88.23%)
+- Candidate-Level Recall: 0.982513 (98.25%)
+- Candidate-Level F0.5: 0.900691
+- End-to-End Recall: 0.725947 (72.59%)
+- End-to-End F0.5: 0.845879
+- True Positives: 13,091
+- False Positives: 1,746
+- False Negatives (within candidates): 233
+- False Negatives (unretrieved by blocking): 4,709
+- Total False Negatives: 4,942
+- Predicted Matches: 14,837
+
+4. BEST THRESHOLD
+--------------------------------------------------------------------------------
+- Optimal Threshold: 0.975 (Fine-grained search over 17 thresholds from 0.930 to 0.985)
+- Optimization Behavior:
+  Because competition evaluation metric is F0.5 (beta = 0.5), precision is weighted 
+  twice as heavily as recall. At lower thresholds (0.50 - 0.70), false positives severely
+  degrade the F0.5 score (1,746 to 7,146 FP).
+  Fine-grained search established the global peak at T = 0.975:
+  * At T = 0.700: F0.5 = 0.845879, FP = 1,746, Precision = 88.23%
+  * At T = 0.970: F0.5 = 0.954025, FP = 172,   Precision = 98.87%
+  * At T = 0.975: F0.5 = 0.954273, FP = 121,   Precision = 99.20% (GLOBAL OPTIMUM)
+  * At T = 0.980: F0.5 = 0.953458, FP = 92,    Precision = 99.38%
+  Threshold 0.975 reduces false positives by 93.1% (down to 121) while retaining 14,938 true matches.
+
+5. BEST BLOCKING STRATEGY
+--------------------------------------------------------------------------------
+- Strategy: Selective Multi-Pass Blocking with Bounded Token Co-Occurrence & Deduplication
+- Core Blocking Passes (all capped at max 250 candidates per block):
+  Pass 1: Exact Normalized Business Name + Country
+  Pass 2: Normalized Business Name Prefix (6 chars) + Country
+  Pass 3: First Name Token (len >= 5) + Country
+  Pass 4: Postal / PIN Code (5-6 digits) + Country
+  Pass 5: House Number + Address Token + Country
+  Pass 6: Name Token + Address Token + Country
+- Deduplication: Strict composite key deduplication across all passes (not simple concatenation).
+
+6. CANDIDATE RECALL BEFORE BLOCKING IMPROVEMENT
+--------------------------------------------------------------------------------
+- Baseline Candidate Recall: 73.8868% (0.738868)
+- True matches present in candidates: 13,324 out of 18,033
+- Unretrievable matches lost at blocking: 4,709 (26.11%)
+
+7. CANDIDATE RECALL AFTER BLOCKING IMPROVEMENT
+--------------------------------------------------------------------------------
+- Selective 6-Pass Candidate Recall: 93.6672% (0.936672)
+- True matches present in candidates: 16,891 out of 18,033
+- Absolute recall gain: +19.7804% (+3,567 previously unretrievable true matches recovered!)
+- Candidate volume impact: only +3.9% candidate increase (396,850 -> 412,508 pairs).
+- Note on Aggressive Blocking (Enhanced Strat-4 with Address-Tail City):
+  While Strat-4 raised candidate recall to 95.55% (17,231 matches), it added 330,000 broad
+  city-level pairs that quadrupled false positives and decreased F0.5 from 0.954273 to 0.936205.
+  Selective 6-Pass remains the optimal blocking strategy.
+
+8. BEST HARD-NEGATIVE STRATEGY
+--------------------------------------------------------------------------------
+- Exclusively generated from 40,000 training S1 entities (0% leakage into validation).
+- Model Architecture: 250-tree Random Forest with balanced class weights.
+- Strategy: Targeted IDF token shortlist inverted index with multi-category confusion:
+  * High-Name Confusion: name_ratio >= 0.70, address_ratio <= 0.65
+  * High-Address Confusion: address_ratio >= 0.70, name_ratio <= 0.65
+  * Dual Moderate Near-Miss: name_ratio >= 0.65, address_ratio >= 0.50
+  * Numeric / House Number Mismatch: address numbers conflicting on similar streets
+  * Transnational Brand Confusion: country conflict with name_ratio >= 0.65
+- Ratio Sweeps Evaluated: 1:1, 1:2, 1:3, 1:5, and category-balanced.
+- Decision: Model B (`clean_validation_model_improved.pkl`, ~2.3:1 ratio) preserved as top artifact.
+
+9. BEST CLEAN-VALIDATION F0.5
+--------------------------------------------------------------------------------
+- Final End-to-End F0.5: 0.954273 (vs Baseline 0.845879, absolute gain of +0.108394, +12.81% relative gain)
+- Final Candidate-Level F0.5: 0.968403 (vs Baseline 0.900691, absolute gain of +0.067712)
+
+10. PRECISION
+--------------------------------------------------------------------------------
+- Final Precision: 0.991965 (99.20%)
+- True Positives: 14,938
+- False Positives: 121
+- Baseline Precision was 0.882321 (gain of +10.96% precision).
+
+11. RECALL
+--------------------------------------------------------------------------------
+- Final Candidate-Level Recall: 0.884376 (88.44%)
+- Final End-to-End Recall: 0.828370 (82.84%)
+- Baseline End-to-End Recall was 0.725947 (gain of +10.24% end-to-end recall).
+
+12. FALSE POSITIVES
+--------------------------------------------------------------------------------
+- Final False Positives: 121 (slashed by 93.1% from baseline 1,746 false positives).
+
+13. FALSE NEGATIVES
+--------------------------------------------------------------------------------
+- Final False Negatives (Model Classifier Misses): 1,953
+- Final False Negatives (Blocking Misses): 1,142
+- Total Final False Negatives: 3,095 (reduced by 1,847 from baseline 4,942 false negatives).
+
+14. CANDIDATE STATISTICS
+--------------------------------------------------------------------------------
+- Candidate File: dataset/train/clean_blocking_candidates_selective.tsv
+- Total Candidate Pairs: 412,508
+- Source-1 Entities Covered: 10,000
+- Average Candidates per Source-1: 41.25
+- Maximum Candidates per Source-1: 295
+- Memory / Disk Size: 11.0 MB
+
+15. EXACT FINAL CONFIGURATION
+--------------------------------------------------------------------------------
+- Preprocessing:
+  * `normalize_text`: lowercase, replace non-alphanumeric with spaces, collapse spaces
+  * `normalize_country`: lowercase, strip
+- Blocking Strategy:
+  * 6-pass Country-bounded selective union (Pass 1-4 standard + Pass 5-6 token co-occurrence)
+  * Bucket cap: <= 250 candidates per block
+- Features (9 similarity features):
+  1. name_ratio (RapidFuzz ratio)
+  2. name_token_sort (RapidFuzz token_sort_ratio)
+  3. name_token_set (RapidFuzz token_set_ratio)
+  4. address_ratio (RapidFuzz ratio)
+  5. address_token_sort (RapidFuzz token_sort_ratio)
+  6. address_token_set (RapidFuzz token_set_ratio)
+  7. country_match (exact binary match)
+  8. name_length_diff (absolute character length delta)
+  9. address_length_diff (absolute character length delta)
+- Model:
+  * Artifact: dataset/train/clean_validation_model_improved.pkl
+  * Type: RandomForestClassifier (250 estimators, max_depth=14, min_samples_leaf=3, class_weight='balanced')
+- Decision Rule:
+  * Match Prediction: probability >= 0.975
+
+16. WHICH EXPERIMENTS WERE REJECTED AND WHY
+--------------------------------------------------------------------------------
+1. Thresholds <= 0.70:
+   - Rejected. At threshold 0.70, false positives reached 2,898 on the expanded candidate set, 
+     dragging F0.5 down to 0.862923. Threshold 0.975 suppresses false positives to 121.
+2. Source-Aware Top-1 / Top-2 Per-Source Truncation:
+   - Rejected. 33.7% of Source-1 entities match multiple target entities across S2 and S3.
+     Forcing Top-1 dropped recall to 56.24% and F0.5 to 0.8625. Global thresholding preserves multi-matches.
+3. Enhanced Strat-4 Blocking (Address-Tail City Union):
+   - Rejected. Although it captured 340 more true matches (95.55% candidate recall), it added
+     330,000 loose city/address candidates, driving false positives to 567 and lowering F0.5 to 0.936205.
+4. Full Cartesian / Unbounded Token Blocking:
+   - Rejected. Unbounded single-token blocking created buckets with up to 226,422 candidates,
+     exploding candidate volume to over 54M pairs with severe memory/disk degradation.
+5. Immediate Full Test Inference:
+   - Rejected in accordance with Phase 12 rules, pending user review of final clean-validation
+     benchmarks.
+
+============================================================
+SUMMARY COMPARISON TABLE: BASELINE VS FINAL
+============================================================
+Metric                      Baseline Config     Final Config        Delta / Improvement
+--------------------------------------------------------------------------------
+Threshold                   0.700               0.975               +0.275
+Candidate Pairs             396,850             412,508             +15,658 (+3.9%)
+Candidate Recall            73.8868%            93.6672%            +19.7804% (+3,567 matches)
+Precision                   88.2321%            99.1965%            +10.9644%
+Candidate-Level Recall      98.2513%            88.4376%            -9.8137%
+End-to-End Recall           72.5947%            82.8370%            +10.2423% (+1,847 matches)
+Candidate-Level F0.5        0.900691            0.968403            +0.067712 (+7.5%)
+End-to-End F0.5             0.845879            0.954273            +0.108394 (+12.81%)
+False Positives             1,746               121                 -1,625 (-93.1%)
+Total False Negatives       4,942               3,095               -1,847 (-37.4%)
+Predicted Matches           14,837              15,059              +222
+============================================================

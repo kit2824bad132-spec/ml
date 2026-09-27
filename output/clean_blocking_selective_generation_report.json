@@ -1,0 +1,15 @@
+{
+  "ground_truth_loaded": false,
+  "selected_passes": [
+    "house_number_address_token_country",
+    "name_token_address_token_country"
+  ],
+  "current_candidate_pairs": 396850,
+  "selected_pass_candidate_pairs": 27650,
+  "new_union_candidate_pairs": 412508,
+  "additional_candidate_pairs_vs_current": 15658,
+  "candidate_growth_ratio": 1.0394557137457479,
+  "average_candidates_per_source1": 41.2508,
+  "maximum_candidates_per_source1": 295,
+  "candidate_file": "dataset/train/clean_blocking_candidates_selective.tsv"
+}

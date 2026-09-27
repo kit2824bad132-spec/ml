@@ -1,0 +1,20 @@
+{
+  "candidate_file_frozen_before_ground_truth_read": true,
+  "validation_labels_used_to_construct_candidates": false,
+  "validation_source1_count": 10000,
+  "training_source1_count": 40000,
+  "source1_id_overlap": 0,
+  "validation_candidate_pairs": 396850,
+  "unique_validation_candidate_pairs": 396850,
+  "duplicate_validation_candidate_pairs": 0,
+  "validation_source1_with_candidates": 8709,
+  "validation_truth_match_count": 18033,
+  "validation_truth_pairs_present_in_candidates": 13324,
+  "candidate_recall": 0.7388676315643542,
+  "training_unique_matched_target_ids": 72777,
+  "validation_unique_matched_target_ids": 18033,
+  "matched_target_id_overlap_count": 0,
+  "matched_target_overlap_fraction_of_validation_targets": 0.0,
+  "labeled_validation_positive_candidate_pairs": 13324,
+  "labeled_validation_negative_candidate_pairs": 383526
+}

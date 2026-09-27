@@ -1,0 +1,56 @@
+================================================================================
+AMAZON ML CHALLENGE 2026 - CLEANUP REPORT
+================================================================================
+Generated: 2026-09-27
+Workspace: C:\Amazon ML challenge\Amazon ML challenge
+
+LATEST RUN FILES KEPT:
+- output/matching_results.tsv (293,150,728 bytes, current leaderboard 0.488 submission)
+- output/model_lightgbm.pkl (1,725,213 bytes, LightGBM model, threshold: 0.760)
+- output/matching_results_final_improved_20260926_230951.tsv (104,806,117 bytes, latest validated run)
+- output/candidate_pairs_final_improved_20260926_230951.tsv (968,945,050 bytes)
+- output/candidate_pairs_lightgbm.tsv (968,945,050 bytes)
+- output/candidate_pairs.tsv (913,547,628 bytes)
+- output/lightgbm_inference_log.txt (194,474 bytes)
+- run_full_test_pipeline.ps1 (4,682 bytes)
+- run_inference_duckdb.py (6,372 bytes)
+- run_inference.py (6,625 bytes)
+- src/bucket_blocking_lightgbm.py (6,081 bytes)
+- src/train_model_lightgbm.py (3,686 bytes)
+- src/clean_validation_train_evaluate.py (23,819 bytes)
+- dataset/train/clean_validation_model_improved.pkl (57,199,943 bytes)
+- dataset/train/features_combined_50k.tsv (38,004,698 bytes)
+- dataset/test/test_source1.tsv (175,022,086 bytes)
+- dataset/test/test_source2.tsv (509,456,422 bytes)
+- dataset/test/test_source3.tsv (506,002,772 bytes)
+- All clean validation & experiment reports in output/ and dataset/train/
+
+OLD FILES REMOVED:
+- output/matching_results 1.tsv (261,509,403 bytes, ~249.39 MB - superseded preliminary run output)
+- output/inference_log.txt (2,804 bytes - superseded preliminary run log)
+
+TEMP FILES REMOVED:
+- output/matching_results_previous.tsv (293,150,728 bytes, ~279.57 MB - exact duplicate backup of output/matching_results.tsv)
+- clean_final_inference_20260926_230951.duckdb (1,974,480,896 bytes, ~1.88 GB - scratch database from latest run)
+- inference_temp.duckdb (3,858,509,824 bytes, ~3.68 GB - old scratch database)
+- lightgbm_blocking.duckdb (741,355,520 bytes, ~707 MB - old scratch blocking database)
+- lightgbm_blocking_final_improved.duckdb & .wal (633,050,103 bytes, ~604 MB - scratch database)
+- lightgbm_blocking_final_improved_20260926_230951.duckdb (749,481,984 bytes, ~715 MB - scratch blocking database)
+- lightgbm_inference.duckdb (5,928,136,704 bytes, ~5.65 GB - old scratch inference database)
+- production_inference.duckdb & .wal (1,938,696,060 bytes, ~1.85 GB - scratch database)
+- run_production_inference.py (13,901 bytes - temporary scratch test script)
+- __pycache__/ (Python bytecode cache)
+- src/__pycache__/ (Python bytecode cache)
+
+UNKNOWN FILES KEPT:
+- None (all workspace files were positively identified and classified)
+
+CURRENT MODEL:
+output/model_lightgbm.pkl
+
+CURRENT OUTPUT:
+output/matching_results.tsv
+
+CURRENT LEADERBOARD RESULT:
+0.488
+================================================================================
