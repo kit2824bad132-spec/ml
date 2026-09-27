@@ -1,7 +1,7 @@
 """
 High-Performance Test Inference Pipeline for Amazon ML Challenge 2026
-Applies validated Model B (RandomForest improved hard-negative)
-with the optimal threshold T = 0.975.
+Applies validated LightGBM Model (LGBMClassifier with 11 disambiguation features)
+with the optimal threshold T = 0.900 (or 0.975).
 Pre-normalizes entity tables once in DuckDB to avoid 73M Python regex calls.
 Streams candidate pairs in disk-backed chunks with bounded RAM.
 Outputs official submission file: output/matching_results.tsv
@@ -18,27 +18,32 @@ from collections import defaultdict
 from rapidfuzz import process
 from rapidfuzz.fuzz import ratio, token_sort_ratio, token_set_ratio
 
+sys.path.append(os.path.dirname(__file__))
+from preprocessing import strip_legal_suffixes, number_match_score
+
 # Input Paths
 TEST_DIR = "dataset/test"
 S1_FILE = os.path.join(TEST_DIR, "test_source1.tsv")
 S2_FILE = os.path.join(TEST_DIR, "test_source2.tsv")
 S3_FILE = os.path.join(TEST_DIR, "test_source3.tsv")
 CANDIDATE_FILE = os.environ.get("ER_CANDIDATE_FILE", "output/candidate_pairs_final_improved_20260926_230951.tsv")
-MODEL_FILE = os.environ.get("ER_MODEL_FILE", "dataset/train/clean_validation_model_improved.pkl")
+MODEL_FILE = os.environ.get("ER_MODEL_FILE", "output/model_lightgbm.pkl")
 OUTPUT_FILE = os.environ.get("ER_MATCHING_OUTPUT", "output/matching_results.tsv")
 OUTPUT_BACKUP = "output/matching_results_improved_model_0975.tsv"
 DB_FILE = os.environ.get("ER_INFERENCE_DB", "inference_optimized_run.duckdb")
 
-# Optimal Validated Decision Threshold for F0.5 = 0.955
-THRESHOLD = float(os.environ.get("ER_THRESHOLD", "0.975"))
+# Optimal Validated Decision Threshold for F0.5
+THRESHOLD = float(os.environ.get("ER_THRESHOLD", "0.900"))
 
 FEATURE_COLUMNS = [
     "name_ratio",
     "name_token_sort",
     "name_token_set",
+    "clean_name_ratio",
     "address_ratio",
     "address_token_sort",
     "address_token_set",
+    "number_match_score",
     "country_match",
     "name_length_diff",
     "address_length_diff",
@@ -176,15 +181,21 @@ def main():
         a2 = chunk["a2"].tolist()
         c2 = chunk["c2"].tolist()
 
-        # Vectorized RapidFuzz features (workers=6)
+        # Vectorized RapidFuzz & disambiguation features (workers=6)
+        clean_n1 = [strip_legal_suffixes(x) for x in n1]
+        clean_n2 = [strip_legal_suffixes(x) for x in n2]
+        num_scores = [number_match_score(x, y) for x, y in zip(a1, a2)]
+
         features = pd.DataFrame()
         features["name_ratio"] = safe_ratio_vec(n1, n2, ratio)
         features["name_token_sort"] = safe_ratio_vec(n1, n2, token_sort_ratio)
         features["name_token_set"] = safe_ratio_vec(n1, n2, token_set_ratio)
+        features["clean_name_ratio"] = safe_ratio_vec(clean_n1, clean_n2, ratio)
         features["address_ratio"] = safe_ratio_vec(a1, a2, ratio)
         features["address_token_sort"] = safe_ratio_vec(a1, a2, token_sort_ratio)
         features["address_token_set"] = safe_ratio_vec(a1, a2, token_set_ratio)
-        features["country_match"] = [1 if x == y else 0 for x, y in zip(c1, c2)]
+        features["number_match_score"] = num_scores
+        features["country_match"] = [1 if x == y and x else 0 for x, y in zip(c1, c2)]
         features["name_length_diff"] = [abs(len(x) - len(y)) for x, y in zip(n1, n2)]
         features["address_length_diff"] = [abs(len(x) - len(y)) for x, y in zip(a1, a2)]
 

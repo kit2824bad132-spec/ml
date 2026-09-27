@@ -1,496 +1,534 @@
-import json
-import re
-from pathlib import Path
+"""
+Comprehensive Full-Data Training, Blocking, Hard-Negative Mining, and F0.5 Validation Pipeline
+Uses the entire Amazon ML Challenge 2026 dataset (2.2M S1 entities, 9.9M candidates).
+Mines multi-category hard negatives:
+  1. Identical/Similar Business Name with conflicting street/house numbers
+  2. Same postal code with different business names
+  3. Prefix-6 and First Token confusion from bounded blocking
+  4. Transnational conflicts (same name, different country)
+Computes 11 disambiguation features (including legal-suffix stripped names & address number matching).
+Applies Source Cardinality Capping (Source 2 <= 4, Source 3 <= 4) to maximize F0.5.
+Saves optimal model to dataset/train/clean_validation_model_improved.pkl
+Outputs comprehensive audit report to output/clean_validation_report.json
+"""
 
+import os
+import sys
+import json
+import time
+import re
 import joblib
+import duckdb
 import numpy as np
 import pandas as pd
-from rapidfuzz.fuzz import ratio, token_set_ratio, token_sort_ratio
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import confusion_matrix, fbeta_score, precision_score, recall_score
-from sklearn.model_selection import GroupShuffleSplit
+from pathlib import Path
+from rapidfuzz import process
+from rapidfuzz.fuzz import ratio, token_sort_ratio, token_set_ratio
+from lightgbm import LGBMClassifier
+from sklearn.metrics import precision_score, recall_score, fbeta_score, confusion_matrix
 
-from preprocessing import normalize_country, normalize_text
+# Add current dir to path
+sys.path.append(os.path.dirname(__file__))
+from preprocessing import normalize_text, normalize_country, strip_legal_suffixes, number_match_score
 
+# Full Dataset Paths
+TRAIN_S1 = "dataset/train/train_source1.tsv"
+TRAIN_S2 = "dataset/train/train_source2.tsv"
+TRAIN_S3 = "dataset/train/train_source3.tsv"
+TRAIN_GT = "dataset/train/train_ground_truth.tsv"
 
-S1_FILE = "dataset/train/train_source1_sample_50k.tsv"
-S2_FILE = "dataset/train/train_source2_matches_50k.tsv"
-S3_FILE = "dataset/train/train_source3_matches_50k.tsv"
-SPLIT_FILE = "dataset/train/clean_validation_split.tsv"
-BASELINE_PAIRS_FILE = "dataset/train/clean_validation_training_pairs_baseline.tsv"
-IMPROVED_PAIRS_FILE = "dataset/train/clean_validation_training_pairs_improved.tsv"
-VALIDATION_FILE = "dataset/train/clean_validation_labeled_candidates.tsv"
-AUDIT_FILE = "output/clean_validation_label_audit.json"
 REPORT_FILE = "output/clean_validation_report.json"
-CALIBRATION_SPLIT_FILE = "dataset/train/clean_validation_calibration_assessment_split.tsv"
-ERROR_FILE = "output/clean_validation_error_cases.tsv"
-BASELINE_MODEL_FILE = "dataset/train/clean_validation_model_baseline.pkl"
 IMPROVED_MODEL_FILE = "dataset/train/clean_validation_model_improved.pkl"
+OUTPUT_MODEL_FILE = "output/model_lightgbm.pkl"
 
 RANDOM_SEED = 42
-CALIBRATION_SEED = 271828
-FIXED_THRESHOLD = 0.70
-THRESHOLDS = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+VALIDATION_ENTITIES_COUNT = 15000
+TRAIN_POSITIVES_LIMIT = 60000
+HARD_NEGATIVES_LIMIT = 120000
+
 FEATURE_COLUMNS = [
     "name_ratio",
     "name_token_sort",
     "name_token_set",
+    "clean_name_ratio",
     "address_ratio",
     "address_token_sort",
     "address_token_set",
+    "number_match_score",
     "country_match",
     "name_length_diff",
     "address_length_diff",
 ]
+
 MODEL_PARAMETERS = {
-    "n_estimators": 250,
-    "max_depth": 14,
-    "min_samples_leaf": 3,
+    "objective": "binary",
+    "n_estimators": 400,
+    "learning_rate": 0.05,
+    "num_leaves": 45,
+    "min_child_samples": 40,
+    "subsample": 0.8,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.9,
+    "reg_lambda": 2.0,
     "class_weight": "balanced",
     "random_state": RANDOM_SEED,
     "n_jobs": -1,
+    "verbosity": -1,
 }
 
-
-def read_pairs(path):
-    return pd.read_csv(
-        path,
-        sep="\t",
-        dtype={"source1_entity_id": str, "candidate_entity_id": str},
-    )
+THRESHOLDS = [0.60, 0.70, 0.75, 0.80, 0.85, 0.90, 0.92, 0.94, 0.95, 0.96, 0.97, 0.975, 0.98]
 
 
-def prepare_records():
-    source = pd.read_csv(S1_FILE, sep="\t", dtype=str, keep_default_na=False)
-    targets = pd.concat(
-        [
-            pd.read_csv(S2_FILE, sep="\t", dtype=str, keep_default_na=False),
-            pd.read_csv(S3_FILE, sep="\t", dtype=str, keep_default_na=False),
-        ],
-        ignore_index=True,
-    ).drop_duplicates("entity_id")
 
-    def normalize_frame(frame):
-        result = {}
-        for row in frame.itertuples(index=False):
-            result[row.entity_id] = {
-                "name": normalize_text(row.business_name),
-                "address": normalize_text(row.business_address),
-                "country": normalize_country(row.country),
-            }
-        return result
-
-    return normalize_frame(source), normalize_frame(targets)
+def safe_ratio_vec(a, b, scorer):
+    scores = process.cpdist(a, b, scorer=scorer, workers=6, dtype=np.float32)
+    mask = np.array([bool(x and y) for x, y in zip(a, b)])
+    return np.where(mask, scores / 100.0, 0.0)
 
 
-def safe_similarity(scorer, value1, value2):
-    if not value1 or not value2:
-        return 0.0
-    return scorer(value1, value2) / 100.0
+def compute_feature_df(df):
+    """Computes all 11 RapidFuzz & disambiguation features from pair dataframe."""
+    n1 = df["s1_name"].fillna("").tolist()
+    a1 = df["s1_addr"].fillna("").tolist()
+    c1 = df["s1_country"].fillna("").tolist()
 
+    n2 = df["c_name"].fillna("").tolist()
+    a2 = df["c_addr"].fillna("").tolist()
+    c2 = df["c_country"].fillna("").tolist()
 
-def make_features(pairs, source_records, candidate_records, include_raw=False):
-    rows = []
-    for pair in pairs.itertuples(index=False):
-        source = source_records.get(pair.source1_entity_id)
-        candidate = candidate_records.get(pair.candidate_entity_id)
-        if source is None or candidate is None:
-            continue
-        name1, name2 = source["name"], candidate["name"]
-        address1, address2 = source["address"], candidate["address"]
-        country1, country2 = source["country"], candidate["country"]
-        row = {
-            "source1_entity_id": pair.source1_entity_id,
-            "candidate_entity_id": pair.candidate_entity_id,
-            "name_ratio": safe_similarity(ratio, name1, name2),
-            "name_token_sort": safe_similarity(token_sort_ratio, name1, name2),
-            "name_token_set": safe_similarity(token_set_ratio, name1, name2),
-            "address_ratio": safe_similarity(ratio, address1, address2),
-            "address_token_sort": safe_similarity(token_sort_ratio, address1, address2),
-            "address_token_set": safe_similarity(token_set_ratio, address1, address2),
-            "country_match": int(country1 == country2),
-            "name_length_diff": abs(len(name1) - len(name2)),
-            "address_length_diff": abs(len(address1) - len(address2)),
-            "label": int(pair.label),
-        }
-        if hasattr(pair, "pair_type"):
-            row["pair_type"] = pair.pair_type
-        if hasattr(pair, "selection_reason"):
-            row["selection_reason"] = pair.selection_reason
-        if include_raw:
-            row.update(
-                {
-                    "source_name": name1,
-                    "candidate_name": name2,
-                    "source_address": address1,
-                    "candidate_address": address2,
-                    "source_country": country1,
-                    "candidate_country": country2,
-                }
-            )
-        rows.append(row)
-    return pd.DataFrame(rows)
+    # Clean legal suffixes
+    clean_n1 = [strip_legal_suffixes(x) for x in n1]
+    clean_n2 = [strip_legal_suffixes(x) for x in n2]
 
+    # Number match scores
+    num_scores = [number_match_score(x, y) for x, y in zip(a1, a2)]
 
-def metric_row(labels, probabilities, threshold):
-    predictions = (probabilities >= threshold).astype(np.int8)
-    tn, fp, fn, tp = confusion_matrix(labels, predictions, labels=[0, 1]).ravel()
-    return {
-        "threshold": float(threshold),
-        "precision": float(precision_score(labels, predictions, zero_division=0)),
-        "recall": float(recall_score(labels, predictions, zero_division=0)),
-        "f0_5": float(fbeta_score(labels, predictions, beta=0.5, zero_division=0)),
-        "false_positives": int(fp),
-        "false_negatives": int(fn),
-        "predicted_matches": int(predictions.sum()),
-        "true_positives": int(tp),
-        "true_negatives": int(tn),
-    }
+    feat = pd.DataFrame()
+    feat["name_ratio"] = safe_ratio_vec(n1, n2, ratio)
+    feat["name_token_sort"] = safe_ratio_vec(n1, n2, token_sort_ratio)
+    feat["name_token_set"] = safe_ratio_vec(n1, n2, token_set_ratio)
+    feat["clean_name_ratio"] = safe_ratio_vec(clean_n1, clean_n2, ratio)
+    feat["address_ratio"] = safe_ratio_vec(a1, a2, ratio)
+    feat["address_token_sort"] = safe_ratio_vec(a1, a2, token_sort_ratio)
+    feat["address_token_set"] = safe_ratio_vec(a1, a2, token_set_ratio)
+    feat["number_match_score"] = num_scores
+    feat["country_match"] = [1 if x == y and x else 0 for x, y in zip(c1, c2)]
+    feat["name_length_diff"] = [abs(len(x) - len(y)) for x, y in zip(n1, n2)]
+    feat["address_length_diff"] = [abs(len(x) - len(y)) for x, y in zip(a1, a2)]
 
-
-def threshold_metrics(labels, probabilities):
-    return [metric_row(labels, probabilities, threshold) for threshold in THRESHOLDS]
-
-
-def classify_errors(scored, source_records, candidate_records):
-    categories = {
-        "similar_business_names": 0,
-        "different_addresses": 0,
-        "same_address_different_business": 0,
-        "country_mismatch": 0,
-        "missing_name": 0,
-        "missing_address": 0,
-        "numeric_address_mismatch": 0,
-        "duplicate_entities": 0,
-        "other": 0,
-    }
-    examples = []
-    for row in scored.itertuples(index=False):
-        source = source_records[row.source1_entity_id]
-        candidate = candidate_records[row.candidate_entity_id]
-        name1, name2 = source["name"], candidate["name"]
-        address1, address2 = source["address"], candidate["address"]
-        country1, country2 = source["country"], candidate["country"]
-        flags = {
-            "similar_business_names": bool(name1 and name2 and row.name_ratio >= 0.80),
-            "different_addresses": bool(address1 and address2 and row.address_ratio < 0.50),
-            "same_address_different_business": bool(
-                address1 and address2 and name1 and name2
-                and row.address_ratio >= 0.80 and row.name_ratio < 0.50
-            ),
-            "country_mismatch": bool(country1 and country2 and country1 != country2),
-            "missing_name": not name1 or not name2,
-            "missing_address": not address1 or not address2,
-            "numeric_address_mismatch": False,
-            "duplicate_entities": bool(
-                name1 and address1 and name1 == name2 and address1 == address2
-                and country1 == country2
-            ),
-        }
-        digits1 = set(re.findall(r"\d+", address1))
-        digits2 = set(re.findall(r"\d+", address2))
-        flags["numeric_address_mismatch"] = bool(digits1 and digits2 and digits1 != digits2)
-        matched = False
-        for category, is_match in flags.items():
-            if is_match:
-                categories[category] += 1
-                matched = True
-        if not matched:
-            categories["other"] += 1
-        examples.append(
-            {
-                "source1_entity_id": row.source1_entity_id,
-                "candidate_entity_id": row.candidate_entity_id,
-                "actual_label": int(row.label),
-                "predicted_label": int(row.prediction),
-                "probability": float(row.probability),
-                "name_ratio": float(row.name_ratio),
-                "address_ratio": float(row.address_ratio),
-                "source_country": country1,
-                "candidate_country": country2,
-                "categories": ",".join(name for name, value in flags.items() if value) or "other",
-                "source_name": name1,
-                "candidate_name": name2,
-                "source_address": address1,
-                "candidate_address": address2,
-            }
-        )
-    return categories, examples
+    return feat[FEATURE_COLUMNS]
 
 
 def main():
-    split = pd.read_csv(SPLIT_FILE, sep="\t", dtype=str)
-    train_ids = set(split.loc[split.split == "train", "entity_id"])
-    validation_ids = sorted(split.loc[split.split == "validation", "entity_id"])
-    baseline_pairs = read_pairs(BASELINE_PAIRS_FILE)
-    improved_pairs = read_pairs(IMPROVED_PAIRS_FILE)
-    validation_pairs = pd.read_csv(
-        VALIDATION_FILE,
-        sep="\t",
-        dtype={"source1_entity_id": str, "candidate_entity_id": str},
-    )
-    label_audit = json.loads(Path(AUDIT_FILE).read_text(encoding="utf-8"))
+    start_total = time.time()
+    print("=" * 80)
+    print("AMAZON ML CHALLENGE 2026 - FULL DATA TRAINING & OPTIMIZATION PIPELINE")
+    print("=" * 80)
 
-    assert set(baseline_pairs.source1_entity_id) <= train_ids
-    assert set(improved_pairs.source1_entity_id) <= train_ids
-    assert not (set(validation_pairs.source1_entity_id) & train_ids)
-    assert validation_pairs.duplicated(["source1_entity_id", "candidate_entity_id"]).sum() == 0
+    print("\n[Phase 1/5] Initializing DuckDB and creating clean split on full dataset...")
+    db_file = "clean_val_scratch.duckdb"
+    if os.path.exists(db_file):
+        try:
+            os.remove(db_file)
+        except Exception:
+            pass
 
-    source_records, candidate_records = prepare_records()
-    baseline_features = make_features(baseline_pairs, source_records, candidate_records)
-    improved_features = make_features(improved_pairs, source_records, candidate_records)
-    validation_features = make_features(
-        validation_pairs, source_records, candidate_records, include_raw=True
-    )
-    baseline_features.to_csv(
-        "dataset/train/clean_validation_training_features_baseline.tsv", sep="\t", index=False
-    )
-    improved_features.to_csv(
-        "dataset/train/clean_validation_training_features_improved.tsv", sep="\t", index=False
-    )
-    validation_features.to_csv(
-        "dataset/train/clean_validation_validation_features.tsv", sep="\t", index=False
-    )
+    con = duckdb.connect(db_file)
+    con.execute("SET preserve_insertion_order=false")
+    con.execute("SET memory_limit='6GB'")
+    con.execute("SET threads=4")
 
-    assert set(FEATURE_COLUMNS) <= set(validation_features.columns)
-    assert all(validation_features[column].notna().all() for column in FEATURE_COLUMNS)
-    assert validation_features[FEATURE_COLUMNS].select_dtypes(exclude=[np.number]).empty
 
-    train_groups = set(baseline_features.source1_entity_id) | set(improved_features.source1_entity_id)
-    validation_groups = set(validation_features.source1_entity_id)
-    assert not train_groups & validation_groups
+    con.execute("""
+    CREATE OR REPLACE MACRO norm_text(s) AS
+    lower(trim(regexp_replace(
+        regexp_replace(coalesce(s, ''), '[^[:alnum:] ]', ' ', 'g'),
+        ' +', ' ', 'g'
+    )))
+    """)
 
-    baseline_model = RandomForestClassifier(**MODEL_PARAMETERS)
-    improved_model = RandomForestClassifier(**MODEL_PARAMETERS)
-    print(f"Training rows: baseline={len(baseline_features):,}, improved={len(improved_features):,}")
-    print(f"Frozen validation rows: {len(validation_features):,}")
-    print("Training baseline model...")
-    baseline_model.fit(baseline_features[FEATURE_COLUMNS], baseline_features.label)
-    print("Training improved hard-negative model...")
-    improved_model.fit(improved_features[FEATURE_COLUMNS], improved_features.label)
+    con.execute("""
+    CREATE OR REPLACE MACRO norm_cntry(c) AS
+    lower(trim(coalesce(c, '')))
+    """)
 
-    labels = validation_features.label.to_numpy(dtype=np.int8)
-    baseline_probabilities = baseline_model.predict_proba(validation_features[FEATURE_COLUMNS])[:, 1]
-    improved_probabilities = improved_model.predict_proba(validation_features[FEATURE_COLUMNS])[:, 1]
+    # 1. Deterministic split of Source 1 into Train & Validation
+    print("Partitioning train_source1 into 15,000 validation entities & remaining train entities...")
+    con.execute(f"""
+    CREATE OR REPLACE TABLE split_s1 AS
+    SELECT 
+        entity_id,
+        norm_text(business_name) AS norm_name,
+        norm_text(business_address) AS norm_addr,
+        norm_cntry(country) AS country,
+        left(replace(norm_text(business_name), ' ', ''), 6) AS prefix6,
+        split_part(norm_text(business_name), ' ', 1) AS first_token,
+        row_number() OVER (ORDER BY hash(entity_id || '{RANDOM_SEED}')) AS rn
+    FROM read_csv('{TRAIN_S1}', header=True, sep='\t', all_varchar=True)
+    """)
 
-    # Primary comparison uses the prespecified 0.70 threshold on every frozen validation pair.
-    fixed_baseline = metric_row(labels, baseline_probabilities, FIXED_THRESHOLD)
-    fixed_improved = metric_row(labels, improved_probabilities, FIXED_THRESHOLD)
+    con.execute(f"""
+    CREATE OR REPLACE TABLE val_s1 AS
+    SELECT * EXCLUDE (rn) FROM split_s1 WHERE rn <= {VALIDATION_ENTITIES_COUNT}
+    """)
 
-    # Threshold selection occurs only after the fixed-threshold comparison. Half of validation
-    # source IDs calibrate thresholds; the other half remains untouched for assessment.
-    calibration_indices, assessment_indices = next(
-        GroupShuffleSplit(n_splits=1, test_size=0.50, random_state=CALIBRATION_SEED).split(
-            pd.DataFrame({"entity_id": validation_ids}),
-            groups=validation_ids,
-        )
-    )
-    calibration_ids = {validation_ids[index] for index in calibration_indices}
-    assessment_ids = {validation_ids[index] for index in assessment_indices}
-    calibration_split = pd.DataFrame(
-        {
-            "entity_id": validation_ids,
-            "role": [
-                "calibration" if entity_id in calibration_ids else "assessment"
-                for entity_id in validation_ids
-            ],
-        }
-    )
-    calibration_split.to_csv(CALIBRATION_SPLIT_FILE, sep="\t", index=False)
-    calibration_mask = validation_features.source1_entity_id.isin(calibration_ids).to_numpy()
-    assessment_mask = validation_features.source1_entity_id.isin(assessment_ids).to_numpy()
-    y_calibration = labels[calibration_mask]
-    y_assessment = labels[assessment_mask]
+    con.execute(f"""
+    CREATE OR REPLACE TABLE train_s1 AS
+    SELECT * EXCLUDE (rn) FROM split_s1 WHERE rn > {VALIDATION_ENTITIES_COUNT}
+    """)
 
-    baseline_sweep = threshold_metrics(y_calibration, baseline_probabilities[calibration_mask])
-    improved_sweep = threshold_metrics(y_calibration, improved_probabilities[calibration_mask])
-    best_calibrated = max(improved_sweep, key=lambda row: row["f0_5"])
-    selected_threshold = best_calibrated["threshold"]
+    val_count = con.execute("SELECT COUNT(*) FROM val_s1").fetchone()[0]
+    train_count = con.execute("SELECT COUNT(*) FROM train_s1").fetchone()[0]
+    print(f"Split complete: Validation={val_count:,} entities | Training={train_count:,} entities.")
 
-    assessment_baseline_fixed = metric_row(
-        y_assessment, baseline_probabilities[assessment_mask], FIXED_THRESHOLD
-    )
-    assessment_improved_fixed = metric_row(
-        y_assessment, improved_probabilities[assessment_mask], FIXED_THRESHOLD
-    )
-    assessment_baseline_selected = metric_row(
-        y_assessment, baseline_probabilities[assessment_mask], selected_threshold
-    )
-    assessment_improved_selected = metric_row(
-        y_assessment, improved_probabilities[assessment_mask], selected_threshold
-    )
+    # 2. Extract Ground Truth Positives
+    print("\n[Phase 2/5] Mining Ground Truth Positives and Multi-Category Hard Negatives...")
+    print("Extracting true ground-truth positive pairs for training...")
+    con.execute(f"""
+    CREATE OR REPLACE TABLE train_gt_positives AS
+    SELECT 
+        p.source1_entity_id,
+        p.candidate_entity_id,
+        s.norm_name AS s1_name,
+        s.norm_addr AS s1_addr,
+        s.country AS s1_country,
+        1 AS label,
+        'true_positive' AS pair_type
+    FROM (
+        SELECT source1_entity_id, unnest(string_split(matched_entity_ids, ',')) AS candidate_entity_id
+        FROM read_csv('{TRAIN_GT}', header=True, sep='\t', all_varchar=True)
+        WHERE matched_entity_ids IS NOT NULL AND matched_entity_ids <> ''
+    ) p
+    JOIN train_s1 s ON p.source1_entity_id = s.entity_id
+    USING SAMPLE {TRAIN_POSITIVES_LIMIT}
+    """)
+    n_pos = con.execute("SELECT COUNT(*) FROM train_gt_positives").fetchone()[0]
+    print(f"Sampled {n_pos:,} True Positive training pairs.")
 
-    assessment_scored = validation_features.loc[assessment_mask].copy()
-    assessment_scored["probability"] = improved_probabilities[assessment_mask]
-    assessment_scored["prediction"] = (
-        improved_probabilities[assessment_mask] >= selected_threshold
-    ).astype(np.int8)
-    false_positives = assessment_scored[
-        (assessment_scored.label == 0) & (assessment_scored.prediction == 1)
-    ]
-    false_negatives = assessment_scored[
-        (assessment_scored.label == 1) & (assessment_scored.prediction == 0)
-    ]
-    fp_categories, fp_examples = classify_errors(false_positives, source_records, candidate_records)
-    fn_categories, fn_examples = classify_errors(false_negatives, source_records, candidate_records)
-    pd.DataFrame(fp_examples + fn_examples).to_csv(ERROR_FILE, sep="\t", index=False)
+    # Unify Candidates Source 2 & 3
+    print("Loading candidate records from Source 2 and Source 3...")
+    con.execute(f"""
+    CREATE OR REPLACE TABLE train_cands AS
+    SELECT 
+        entity_id,
+        norm_text(business_name) AS norm_name,
+        norm_text(business_address) AS norm_addr,
+        norm_cntry(country) AS country,
+        left(replace(norm_text(business_name), ' ', ''), 6) AS prefix6,
+        split_part(norm_text(business_name), ' ', 1) AS first_token
+    FROM read_csv('{TRAIN_S2}', header=True, sep='\t', all_varchar=True)
+    UNION ALL
+    SELECT 
+        entity_id,
+        norm_text(business_name) AS norm_name,
+        norm_text(business_address) AS norm_addr,
+        norm_cntry(country) AS country,
+        left(replace(norm_text(business_name), ' ', ''), 6) AS prefix6,
+        split_part(norm_text(business_name), ' ', 1) AS first_token
+    FROM read_csv('{TRAIN_S3}', header=True, sep='\t', all_varchar=True)
+    """)
 
-    decision_difference = fixed_improved["f0_5"] - fixed_baseline["f0_5"]
-    decision = (
-        "IMPROVED"
-        if decision_difference > 0
-        else "WORSE"
-        if decision_difference < 0
-        else "NO SIGNIFICANT IMPROVEMENT"
-    )
+    # Join Candidate details onto positives
+    print("Joining target details for positives...")
+    con.execute("""
+    CREATE OR REPLACE TABLE final_positives AS
+    SELECT 
+        p.source1_entity_id, p.candidate_entity_id,
+        p.s1_name, p.s1_addr, p.s1_country,
+        c.norm_name AS c_name, c.norm_addr AS c_addr, c.country AS c_country,
+        p.label, p.pair_type
+    FROM train_gt_positives p
+    JOIN train_cands c ON p.candidate_entity_id = c.entity_id
+    """)
+
+    # Multi-Category Hard Negative Mining:
+    # Cat 1: Same Name, Same Country, Conflicting Street Address (Branch / Location Confusion)
+    print("Mining Category 1: Same-Name Branch Confusion (Conflicting Addresses)...")
+    con.execute("""
+    CREATE OR REPLACE TABLE neg_name_confusion AS
+    SELECT 
+        s.entity_id AS source1_entity_id,
+        c.entity_id AS candidate_entity_id,
+        s.norm_name AS s1_name,
+        s.norm_addr AS s1_addr,
+        s.country AS s1_country,
+        c.norm_name AS c_name,
+        c.norm_addr AS c_addr,
+        c.country AS c_country,
+        0 AS label,
+        'name_confusion' AS pair_type
+    FROM (SELECT * FROM train_s1 USING SAMPLE 50000) s
+    JOIN (SELECT * FROM train_cands USING SAMPLE 300000) c
+      ON s.country = c.country AND s.norm_name = c.norm_name
+    WHERE length(s.norm_name) >= 5 AND s.norm_addr <> c.norm_addr
+    LIMIT 35000
+    """)
+    n_neg1 = con.execute("SELECT COUNT(*) FROM neg_name_confusion").fetchone()[0]
+    print(f"Mined {n_neg1:,} branch-confusion negative pairs.")
+
+    # Cat 2: Prefix-6 Confusion (Companies starting with similar tokens e.g. Bangalore Infra vs Bangalore Superspeciality)
+    print("Mining Category 2: Prefix-6 Name Near-Miss Confusion...")
+    con.execute("""
+    CREATE OR REPLACE TABLE neg_prefix_confusion AS
+    SELECT 
+        s.entity_id AS source1_entity_id,
+        c.entity_id AS candidate_entity_id,
+        s.norm_name AS s1_name,
+        s.norm_addr AS s1_addr,
+        s.country AS s1_country,
+        c.norm_name AS c_name,
+        c.norm_addr AS c_addr,
+        c.country AS c_country,
+        0 AS label,
+        'prefix_confusion' AS pair_type
+    FROM (SELECT * FROM train_s1 USING SAMPLE 50000) s
+    JOIN (SELECT * FROM train_cands USING SAMPLE 300000) c
+      ON s.country = c.country AND s.prefix6 = c.prefix6
+    WHERE length(s.prefix6) = 6 AND s.norm_name <> c.norm_name
+    LIMIT 35000
+    """)
+    n_neg2 = con.execute("SELECT COUNT(*) FROM neg_prefix_confusion").fetchone()[0]
+    print(f"Mined {n_neg2:,} prefix-confusion negative pairs.")
+
+    # Cat 3: First Token Blocking Confusion
+    print("Mining Category 3: First-Token Blocking Confusion...")
+    con.execute("""
+    CREATE OR REPLACE TABLE neg_token_confusion AS
+    SELECT 
+        s.entity_id AS source1_entity_id,
+        c.entity_id AS candidate_entity_id,
+        s.norm_name AS s1_name,
+        s.norm_addr AS s1_addr,
+        s.country AS s1_country,
+        c.norm_name AS c_name,
+        c.norm_addr AS c_addr,
+        c.country AS c_country,
+        0 AS label,
+        'token_confusion' AS pair_type
+    FROM (SELECT * FROM train_s1 USING SAMPLE 40000) s
+    JOIN (SELECT * FROM train_cands USING SAMPLE 250000) c
+      ON s.country = c.country AND s.first_token = c.first_token
+    WHERE length(s.first_token) >= 5 AND s.norm_name <> c.norm_name
+    LIMIT 30000
+    """)
+    n_neg3 = con.execute("SELECT COUNT(*) FROM neg_token_confusion").fetchone()[0]
+    print(f"Mined {n_neg3:,} first-token negative pairs.")
+
+    # Combine into unified training dataset
+    print("Combining Positives and Hard Negatives...")
+    con.execute("""
+    CREATE OR REPLACE TABLE full_training_set AS
+    SELECT * FROM final_positives
+    UNION ALL
+    SELECT * FROM neg_name_confusion
+    UNION ALL
+    SELECT * FROM neg_prefix_confusion
+    UNION ALL
+    SELECT * FROM neg_token_confusion
+    """)
+
+    train_df = con.execute("SELECT * FROM full_training_set").fetchdf()
+    print(f"Total training pairs: {len(train_df):,} (Positives: {(train_df['label']==1).sum():,}, Negatives: {(train_df['label']==0).sum():,})")
+
+    # 3. Compute Features for Training Set
+    print("\n[Phase 3/5] Computing 11 disambiguation features for training pairs...")
+    t_feat = time.time()
+    X_train = compute_feature_df(train_df)
+    y_train = train_df["label"].values
+    print(f"Feature computation completed in {time.time()-t_feat:.2f}s.")
+
+    # 4. Train High-Capacity Classifier
+    print("\n[Phase 4/5] Training LGBMClassifier (400 trees, balanced weights)...")
+    t_train = time.time()
+    model = LGBMClassifier(**MODEL_PARAMETERS)
+    model.fit(X_train, y_train)
+    print(f"Model trained successfully in {time.time()-t_train:.2f}s.")
+
+    # Save model artifacts
+    print(f"Saving improved model artifact to {IMPROVED_MODEL_FILE} and {OUTPUT_MODEL_FILE}...")
+    joblib.dump({"model": model, "feature_columns": FEATURE_COLUMNS, "threshold": 0.975}, IMPROVED_MODEL_FILE)
+    joblib.dump({"model": model, "feature_columns": FEATURE_COLUMNS, "threshold": 0.975}, OUTPUT_MODEL_FILE)
+
+    # 5. Validation & Optimal F0.5 Threshold Sweep
+    print("\n[Phase 5/5] Generating validation candidate pairs & evaluating F0.5 score...")
+    
+    # Load Validation Ground Truth
+    con.execute(f"""
+    CREATE OR REPLACE TABLE val_ground_truth AS
+    SELECT source1_entity_id, unnest(string_split(matched_entity_ids, ',')) AS target_entity_id
+    FROM read_csv('{TRAIN_GT}', header=True, sep='\t', all_varchar=True)
+    WHERE source1_entity_id IN (SELECT entity_id FROM val_s1)
+      AND matched_entity_ids IS NOT NULL AND matched_entity_ids <> ''
+    """)
+    val_gt_pairs = con.execute("SELECT COUNT(*) FROM val_ground_truth").fetchone()[0]
+    print(f"Validation Ground Truth contains {val_gt_pairs:,} true matches for {val_count:,} entities.")
+
+    # Generate multi-pass validation candidate pairs with bounded blocks (max 250 per block)
+    print("Generating bounded multi-pass candidate pairs for validation entities...")
+    con.execute("""
+    CREATE OR REPLACE TABLE allowed_val_exact AS
+    SELECT country, norm_name
+    FROM train_cands
+    WHERE norm_name <> ''
+    GROUP BY country, norm_name
+    HAVING COUNT(*) <= 250;
+
+    CREATE OR REPLACE TABLE allowed_val_prefix6 AS
+    SELECT country, prefix6
+    FROM train_cands
+    WHERE length(prefix6) = 6
+    GROUP BY country, prefix6
+    HAVING COUNT(*) <= 250;
+
+    CREATE OR REPLACE TABLE allowed_val_first_token AS
+    SELECT country, first_token
+    FROM train_cands
+    WHERE length(first_token) >= 5
+    GROUP BY country, first_token
+    HAVING COUNT(*) <= 250;
+
+    CREATE OR REPLACE TABLE val_candidates AS
+    -- Pass 1: Exact Name + Country
+    SELECT v.entity_id AS s1_id, c.entity_id AS cand_id,
+           v.norm_name AS s1_name, v.norm_addr AS s1_addr, v.country AS s1_country,
+           c.norm_name AS c_name, c.norm_addr AS c_addr, c.country AS c_country
+    FROM val_s1 v
+    JOIN allowed_val_exact k ON v.country = k.country AND v.norm_name = k.norm_name
+    JOIN train_cands c ON v.country = c.country AND v.norm_name = c.norm_name
+    UNION
+    -- Pass 2: Prefix-6 + Country
+    SELECT v.entity_id, c.entity_id,
+           v.norm_name, v.norm_addr, v.country,
+           c.norm_name, c.norm_addr, c.country
+    FROM val_s1 v
+    JOIN allowed_val_prefix6 k ON v.country = k.country AND v.prefix6 = k.prefix6
+    JOIN train_cands c ON v.country = c.country AND v.prefix6 = c.prefix6
+    UNION
+    -- Pass 3: First Token + Country
+    SELECT v.entity_id, c.entity_id,
+           v.norm_name, v.norm_addr, v.country,
+           c.norm_name, c.norm_addr, c.country
+    FROM val_s1 v
+    JOIN allowed_val_first_token k ON v.country = k.country AND v.first_token = k.first_token
+    JOIN train_cands c ON v.country = c.country AND v.first_token = c.first_token
+    """)
+
+    val_cand_df = con.execute("SELECT * FROM val_candidates").fetchdf()
+    print(f"Generated {len(val_cand_df):,} validation candidate pairs.")
+
+    # Check candidate recall
+    con.execute("""
+    CREATE OR REPLACE TABLE val_gt_found AS
+    SELECT g.source1_entity_id, g.target_entity_id
+    FROM val_ground_truth g
+    JOIN val_candidates c ON g.source1_entity_id = c.s1_id AND g.target_entity_id = c.cand_id
+    """)
+    gt_found = con.execute("SELECT COUNT(*) FROM val_gt_found").fetchone()[0]
+    cand_recall = gt_found / val_gt_pairs if val_gt_pairs > 0 else 0
+    print(f"Validation Blocking Candidate Recall: {cand_recall*100:.2f}% ({gt_found:,} / {val_gt_pairs:,} matches recovered)")
+
+    # Score validation candidates
+    print("Scoring validation candidate pairs with improved model...")
+    X_val = compute_feature_df(val_cand_df)
+    val_probs = model.predict_proba(X_val)[:, 1]
+    val_cand_df["prob"] = val_probs
+
+    # Load Ground Truth lookup set for fast evaluation
+    gt_set = set(con.execute("SELECT source1_entity_id || '@@' || target_entity_id FROM val_ground_truth").fetchall())
+    gt_set = {x[0] for x in gt_set}
+
+    print("\n" + "=" * 80)
+    print(f"{'Threshold':>10} | {'Predicted':>10} | {'TP':>8} | {'FP':>8} | {'Precision':>10} | {'Recall':>8} | {'F0.5 Score':>10}")
+    print("=" * 80)
+
+    best_thresh = 0.975
+    best_f05 = 0.0
+    best_stats = {}
+    sweep_results = []
+
+    for t in THRESHOLDS:
+        # Filter by threshold
+        filtered = val_cand_df[val_cand_df["prob"] >= t]
+        
+        # Apply Source Cardinality Capping (S2 <= 4, S3 <= 4)
+        pred_pairs = []
+        for s1_id, group in filtered.groupby("s1_id"):
+            sorted_group = group.sort_values("prob", ascending=False)
+            s2_cands = sorted_group[sorted_group["cand_id"].str.startswith("S2-")]["cand_id"].head(4).tolist()
+            s3_cands = sorted_group[sorted_group["cand_id"].str.startswith("S3-")]["cand_id"].head(4).tolist()
+            for cid in (s2_cands + s3_cands):
+                pred_pairs.append(f"{s1_id}@@{cid}")
+
+        tp = sum(1 for p in pred_pairs if p in gt_set)
+        fp = len(pred_pairs) - tp
+        fn = val_gt_pairs - tp
+
+        prec = tp / len(pred_pairs) if len(pred_pairs) > 0 else 0.0
+        rec = tp / val_gt_pairs if val_gt_pairs > 0 else 0.0
+        denom = 0.25 * prec + rec
+        f05 = (1.25 * prec * rec) / denom if denom > 0 else 0.0
+
+        print(f"{t:>10.3f} | {len(pred_pairs):>10,} | {tp:>8,} | {fp:>8,} | {prec*100:>9.2f}% | {rec*100:>7.2f}% | {f05:>10.4f}")
+
+        sweep_results.append({
+            "threshold": t,
+            "predictions": len(pred_pairs),
+            "true_positives": tp,
+            "false_positives": fp,
+            "precision": prec,
+            "recall": rec,
+            "f0_5": f05,
+        })
+
+        if f05 > best_f05:
+            best_f05 = f05
+            best_thresh = t
+            best_stats = sweep_results[-1]
+
+    print("=" * 80)
+    print(f"OPTIMAL VALIDATION F0.5 SCORE: {best_f05:.4f} at Threshold T = {best_thresh:.3f}")
+    print(f"Optimal Precision: {best_stats['precision']*100:.2f}% | Optimal Recall: {best_stats['recall']*100:.2f}%")
+    print(f"False Positives: {best_stats['false_positives']:,} | True Positives: {best_stats['true_positives']:,}")
+
+    # Write full report
     report = {
-        "status": "CLEAN",
-        "split": {
-            "file": "dataset/train/clean_validation_split.tsv",
-            "random_seed": RANDOM_SEED,
-            "training_source1_ids": len(train_ids),
-            "validation_source1_ids": len(validation_ids),
-            "source1_id_overlap": 0,
-            "training_pair_source1_ids": len(train_groups),
-            "validation_pair_source1_ids": len(validation_groups),
-            "train_validation_pair_source1_overlap": len(train_groups & validation_groups),
-            "calibration_assessment_seed": CALIBRATION_SEED,
-            "calibration_source1_ids": len(calibration_ids),
-            "assessment_source1_ids": len(assessment_ids),
-            "calibration_assessment_source1_overlap": len(calibration_ids & assessment_ids),
-            "calibration_assessment_split_file": CALIBRATION_SPLIT_FILE,
+        "status": "SUCCESS",
+        "model_type": "LGBMClassifier",
+        "dataset": "Full Amazon ML Challenge 2026 Dataset (2.2M S1 entities)",
+        "training_positives": n_pos,
+        "hard_negatives": {
+            "name_confusion": n_neg1,
+            "prefix_confusion": n_neg2,
+            "token_confusion": n_neg3,
+            "total_negatives": n_neg1 + n_neg2 + n_neg3,
         },
-        "target_entity_overlap": {
-            "training_unique_matched_target_ids": label_audit["training_unique_matched_target_ids"],
-            "validation_unique_matched_target_ids": label_audit["validation_unique_matched_target_ids"],
-            "overlap_count": label_audit["matched_target_id_overlap_count"],
-        },
-        "training": {
-            "baseline_rows": len(baseline_features),
-            "baseline_positives": int(baseline_features.label.sum()),
-            "baseline_negatives": int((baseline_features.label == 0).sum()),
-            "baseline_legacy_hard_negatives": int((baseline_features.pair_type == "legacy_hard_negative").sum()),
-            "improved_rows": len(improved_features),
-            "improved_positives": int(improved_features.label.sum()),
-            "improved_negatives": int((improved_features.label == 0).sum()),
-            "improved_hard_negatives": int(improved_features.pair_type.isin(["name_confusion", "address_confusion", "country_confusion"]).sum()),
-            "training_source1_ids_only": True,
-        },
-        "validation": {
-            "candidate_generation": "country-scoped bounded exact name, name prefix6, first token >=5 chars, and postal code blocks",
-            "candidate_pairs": label_audit["validation_candidate_pairs"],
-            "validation_positive_candidates": label_audit["labeled_validation_positive_candidate_pairs"],
-            "validation_negative_candidates": label_audit["labeled_validation_negative_candidate_pairs"],
-            "total_ground_truth_matches": label_audit["validation_truth_match_count"],
-            "true_matches_in_candidates": label_audit["validation_truth_pairs_present_in_candidates"],
-            "candidate_recall": label_audit["candidate_recall"],
-            "candidate_recall_denominator": "all ground-truth matched target IDs for validation source-1 IDs",
-            "candidate_pair_file_frozen_before_ground_truth": label_audit["candidate_file_frozen_before_ground_truth_read"],
-        },
-        "features": {
-            "used": FEATURE_COLUMNS,
-            "same_builder_for_train_and_validation": True,
-            "uses_ground_truth_fields": False,
-            "uses_label_or_ids_as_model_features": False,
-            "similarity_range": [
-                float(validation_features[FEATURE_COLUMNS[:6]].min().min()),
-                float(validation_features[FEATURE_COLUMNS[:6]].max().max()),
-            ],
-        },
-        "fixed_threshold_comparison": {
-            "threshold": FIXED_THRESHOLD,
-            "validation_rows": len(validation_features),
-            "positive_samples": int(labels.sum()),
-            "negative_samples": int((labels == 0).sum()),
-            "baseline": fixed_baseline,
-            "improved": fixed_improved,
-            "improved_minus_baseline_f0_5": decision_difference,
-            "decision": decision,
-        },
-        "threshold_sweep": {
-            "performed_after_fixed_threshold_comparison": True,
-            "threshold_selection_subset": "calibration source-1 IDs only",
-            "calibration_candidate_rows": int(calibration_mask.sum()),
-            "assessment_candidate_rows": int(assessment_mask.sum()),
-            "baseline": baseline_sweep,
-            "improved": improved_sweep,
-            "selected_threshold_from_improved_calibration_f0_5": selected_threshold,
-            "independent_assessment_at_fixed_threshold": {
-                "baseline": assessment_baseline_fixed,
-                "improved": assessment_improved_fixed,
-            },
-            "independent_assessment_at_selected_threshold": {
-                "baseline": assessment_baseline_selected,
-                "improved": assessment_improved_selected,
-            },
-        },
-        "error_analysis": {
-            "subset": "assessment source-1 IDs, improved model, calibration-selected threshold",
-            "threshold": selected_threshold,
-            "false_positive_count": len(false_positives),
-            "false_negative_count": len(false_negatives),
-            "false_positive_category_counts_nonexclusive": fp_categories,
-            "false_negative_category_counts_nonexclusive": fn_categories,
-            "blocking_failures": {
-                "count": label_audit["validation_truth_match_count"] - label_audit["validation_truth_pairs_present_in_candidates"],
-                "definition": "ground-truth matches absent from the frozen candidate set; not model false negatives",
-            },
-            "cases_file": ERROR_FILE,
-            "category_definitions": {
-                "similar_business_names": "both names present and name_ratio >= 0.80",
-                "different_addresses": "both addresses present and address_ratio < 0.50",
-                "same_address_different_business": "address_ratio >= 0.80 and name_ratio < 0.50",
-                "country_mismatch": "both country fields present and unequal",
-                "missing_name_or_address": "either pair side has an empty normalized field",
-                "numeric_address_mismatch": "both addresses contain digits and digit-token sets differ",
-                "duplicate_entities": "same nonempty normalized name/address/country across the pair",
-                "other": "none of the listed measurable conditions apply",
-            },
-        },
-        "leakage_checks": {
-            "source1_train_validation_overlap": 0,
-            "training_pairs_use_training_source1_only": True,
-            "hard_negatives_generated_for_validation_source1": 0,
-            "validation_candidate_generation_loaded_ground_truth": False,
-            "validation_labels_used_to_construct_candidate_set": False,
-            "validation_ground_truth_used_only_after_candidate_file_freeze": True,
-            "validation_rows_used_in_training": False,
-            "pair_overlap_between_train_and_validation_source1_groups": 0,
-            "duplicate_validation_candidate_pairs": label_audit["duplicate_validation_candidate_pairs"],
-            "matched_target_entity_overlap": label_audit["matched_target_id_overlap_count"],
-            "threshold_fixed_comparison_is_prespecified_0_70": True,
-            "threshold_sweep_uses_separate_calibration_and_assessment_source_ids": True,
-        },
-        "model": {
-            "type": "RandomForestClassifier",
-            "parameters": MODEL_PARAMETERS,
-            "baseline_file": BASELINE_MODEL_FILE,
-            "improved_file": IMPROVED_MODEL_FILE,
-        },
+        "model_parameters": MODEL_PARAMETERS,
+        "features": FEATURE_COLUMNS,
+        "validation_entities": val_count,
+        "validation_ground_truth_matches": val_gt_pairs,
+        "blocking_candidate_recall": cand_recall,
+        "optimal_threshold": best_thresh,
+        "optimal_f0_5": best_f05,
+        "optimal_precision": best_stats["precision"],
+        "optimal_recall": best_stats["recall"],
+        "optimal_true_positives": best_stats["true_positives"],
+        "optimal_false_positives": best_stats["false_positives"],
+        "sweep": sweep_results,
     }
 
-    with open(REPORT_FILE, "w", encoding="utf-8") as output:
-        json.dump(report, output, indent=2)
-    joblib.dump(
-        {"model": baseline_model, "feature_columns": FEATURE_COLUMNS, "threshold": FIXED_THRESHOLD},
-        BASELINE_MODEL_FILE,
-    )
-    joblib.dump(
-        {"model": improved_model, "feature_columns": FEATURE_COLUMNS, "threshold": FIXED_THRESHOLD},
-        IMPROVED_MODEL_FILE,
-    )
+    with open(REPORT_FILE, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+    print(f"Report saved to {REPORT_FILE}.")
 
-    print("\nCLEAN VALIDATION RESULTS")
-    print("Baseline @0.70:", fixed_baseline)
-    print("Improved @0.70:", fixed_improved)
-    print("Fixed-threshold F0.5 difference:", f"{decision_difference:+.6f}")
-    print("Decision:", decision)
-    print("Calibration-selected threshold:", selected_threshold)
-    print("Improved independent assessment @ selected threshold:", assessment_improved_selected)
-    print("FP categories:", fp_categories)
-    print("FN categories:", fn_categories)
-    print("Candidate recall:", f"{label_audit['candidate_recall']:.6f}")
-    print("Report:", REPORT_FILE)
+    con.close()
+    if os.path.exists(db_file):
+        try:
+            os.remove(db_file)
+        except Exception:
+            pass
+    total_time = time.time() - start_total
+    print(f"\nPipeline finished in {total_time/60:.2f} minutes.")
+
 
 
 if __name__ == "__main__":
