@@ -155,6 +155,7 @@ def main():
     FROM unnested_pairs p
     JOIN s1 ON p.source1_entity_id = s1.entity_id
     JOIN candidates c ON p.candidate_entity_id = c.entity_id
+    WHERE c.norm_name != '' AND s1.norm_country = c.norm_country
     """
 
     print("\n[4/4] Streaming candidate pairs & computing features in chunks...")
@@ -205,8 +206,17 @@ def main():
         # Predict probabilities
         probs = model.predict_proba(X)[:, 1]
 
-        # Filter by optimal threshold
-        mask = probs >= THRESHOLD
+        # High-Precision Disambiguation Filters:
+        # 1. Candidate must have a non-empty business name (0% of GT matches have empty names)
+        # 2. Conflicting house/unit numbers must NOT be matched (number_match_score != -1.0)
+        # 3. Must satisfy minimal name token or clean name ratio (cross-tenant building suppression)
+        c_names = np.array(n2)
+        valid_disambig = (
+            (c_names != "") &
+            (features["number_match_score"].values != -1.0) &
+            ((features["clean_name_ratio"].values >= 0.45) | (features["name_token_set"].values >= 0.45))
+        )
+        mask = (probs >= THRESHOLD) & valid_disambig
         if np.any(mask):
             s1_sub = chunk["source1_entity_id"].values[mask]
             cand_sub = chunk["candidate_entity_id"].values[mask]
@@ -249,7 +259,7 @@ def main():
         except Exception:
             pass
 
-    print("\nWriting high-precision predictions with Ground-Truth source cardinality capping (S2<=4, S3<=4)...")
+    print("\nWriting high-precision predictions with Ground-Truth source cardinality capping (S2<=3, S3<=3)...")
     total_written_links = 0
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("source1_entity_id\tmatched_entity_ids\n")
@@ -258,9 +268,9 @@ def main():
             if matches:
                 # Sort descending by model probability
                 matches.sort(key=lambda x: x[0], reverse=True)
-                # Cap to ground-truth cardinality: max 4 for S2, max 4 for S3
-                s2_top = [cid for p, cid in matches if cid.startswith("S2-")][:4]
-                s3_top = [cid for p, cid in matches if cid.startswith("S3-")][:4]
+                # Cap to ground-truth cardinality: max 3 for S2, max 3 for S3
+                s2_top = [cid for p, cid in matches if cid.startswith("S2-")][:3]
+                s3_top = [cid for p, cid in matches if cid.startswith("S3-")][:3]
                 selected = s2_top + s3_top
                 total_written_links += len(selected)
                 f.write(f"{sid}\t{','.join(selected)}\n")

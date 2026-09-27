@@ -314,6 +314,32 @@ def main():
     n_neg3 = con.execute("SELECT COUNT(*) FROM neg_token_confusion").fetchone()[0]
     print(f"Mined {n_neg3:,} first-token negative pairs.")
 
+    # Cat 4: Same Address, Same Country, Different Business Name (Commercial Plaza / Multi-Tenant Building)
+    print("Mining Category 4: Same-Address Different-Business Confusion (Plazas/Malls)...")
+    con.execute("""
+    CREATE OR REPLACE TABLE neg_same_addr_confusion AS
+    SELECT 
+        s.entity_id AS source1_entity_id,
+        c.entity_id AS candidate_entity_id,
+        s.norm_name AS s1_name,
+        s.norm_addr AS s1_addr,
+        s.country AS s1_country,
+        c.norm_name AS c_name,
+        c.norm_addr AS c_addr,
+        c.country AS c_country,
+        0 AS label,
+        'same_addr_confusion' AS pair_type
+    FROM (SELECT * FROM train_s1 USING SAMPLE 50000) s
+    JOIN (SELECT * FROM train_cands USING SAMPLE 300000) c
+      ON s.country = c.country AND s.norm_addr = c.norm_addr
+    WHERE length(s.norm_addr) >= 10 AND s.norm_name <> c.norm_name
+      AND split_part(s.norm_name, ' ', 1) <> split_part(c.norm_name, ' ', 1)
+      AND c.norm_name <> ''
+    LIMIT 25000
+    """)
+    n_neg4 = con.execute("SELECT COUNT(*) FROM neg_same_addr_confusion").fetchone()[0]
+    print(f"Mined {n_neg4:,} same-address negative pairs.")
+
     # Combine into unified training dataset
     print("Combining Positives and Hard Negatives...")
     con.execute("""
@@ -325,6 +351,8 @@ def main():
     SELECT * FROM neg_prefix_confusion
     UNION ALL
     SELECT * FROM neg_token_confusion
+    UNION ALL
+    SELECT * FROM neg_same_addr_confusion
     """)
 
     train_df = con.execute("SELECT * FROM full_training_set").fetchdf()
@@ -432,62 +460,105 @@ def main():
     X_val = compute_feature_df(val_cand_df)
     val_probs = model.predict_proba(X_val)[:, 1]
     val_cand_df["prob"] = val_probs
+    for col in X_val.columns:
+        val_cand_df[col] = X_val[col]
 
-    # Load Ground Truth lookup set for fast evaluation
-    gt_set = set(con.execute("SELECT source1_entity_id || '@@' || target_entity_id FROM val_ground_truth").fetchall())
-    gt_set = {x[0] for x in gt_set}
+    # Build GT dict for Macro F0.5
+    all_val_s1_ids = [r[0] for r in con.execute("SELECT entity_id FROM val_s1").fetchall()]
+    gt_pairs_df = con.execute("SELECT source1_entity_id, target_entity_id FROM val_ground_truth").fetchdf()
+    gt_dict = {sid: set() for sid in all_val_s1_ids}
+    for _, r in gt_pairs_df.iterrows():
+        gt_dict[r["source1_entity_id"]].add(r["target_entity_id"])
 
-    print("\n" + "=" * 80)
-    print(f"{'Threshold':>10} | {'Predicted':>10} | {'TP':>8} | {'FP':>8} | {'Precision':>10} | {'Recall':>8} | {'F0.5 Score':>10}")
-    print("=" * 80)
+    print("\n" + "=" * 90)
+    print(f"{'Threshold':>10} | {'Predicted':>10} | {'TP':>8} | {'FP':>8} | {'Precision':>10} | {'Recall':>8} | {'Macro F0.5':>10} | {'Micro F0.5':>10}")
+    print("=" * 90)
 
-    best_thresh = 0.975
-    best_f05 = 0.0
+    best_thresh = 0.900
+    best_macro_f05 = 0.0
     best_stats = {}
     sweep_results = []
 
+    # Disambiguation filter:
+    # 1. Non-empty candidate name
+    # 2. No conflicting house/unit numbers
+    # 3. Name similarity check for cross-tenant building suppression
+    val_cand_df_valid = val_cand_df[
+        (val_cand_df["c_name"] != "") &
+        (val_cand_df["number_match_score"] != -1.0) &
+        ((val_cand_df["clean_name_ratio"] >= 0.45) | (val_cand_df["name_token_set"] >= 0.45))
+    ]
+
     for t in THRESHOLDS:
-        # Filter by threshold
-        filtered = val_cand_df[val_cand_df["prob"] >= t]
+        filtered = val_cand_df_valid[val_cand_df_valid["prob"] >= t].sort_values("prob", ascending=False)
         
-        # Apply Source Cardinality Capping (S2 <= 4, S3 <= 4)
-        pred_pairs = []
-        for s1_id, group in filtered.groupby("s1_id"):
-            sorted_group = group.sort_values("prob", ascending=False)
-            s2_cands = sorted_group[sorted_group["cand_id"].str.startswith("S2-")]["cand_id"].head(4).tolist()
-            s3_cands = sorted_group[sorted_group["cand_id"].str.startswith("S3-")]["cand_id"].head(4).tolist()
-            for cid in (s2_cands + s3_cands):
-                pred_pairs.append(f"{s1_id}@@{cid}")
+        pred_dict = {sid: set() for sid in all_val_s1_ids}
+        s2_c = {sid: 0 for sid in all_val_s1_ids}
+        s3_c = {sid: 0 for sid in all_val_s1_ids}
+        for _, r in filtered.iterrows():
+            sid = r["s1_id"]
+            cid = r["cand_id"]
+            if cid.startswith("S2-"):
+                if s2_c[sid] >= 3: continue
+                s2_c[sid] += 1
+            else:
+                if s3_c[sid] >= 3: continue
+                s3_c[sid] += 1
+            pred_dict[sid].add(cid)
 
-        tp = sum(1 for p in pred_pairs if p in gt_set)
-        fp = len(pred_pairs) - tp
-        fn = val_gt_pairs - tp
-
-        prec = tp / len(pred_pairs) if len(pred_pairs) > 0 else 0.0
-        rec = tp / val_gt_pairs if val_gt_pairs > 0 else 0.0
+        # Macro F0.5
+        macro_scores = []
+        total_tp = 0
+        total_fp = 0
+        for sid in all_val_s1_ids:
+            gt_m = gt_dict[sid]
+            pr_m = pred_dict[sid]
+            if len(gt_m) == 0:
+                macro_scores.append(1.0 if len(pr_m) == 0 else 0.0)
+            else:
+                if len(pr_m) == 0:
+                    macro_scores.append(0.0)
+                else:
+                    tp = len(gt_m.intersection(pr_m))
+                    if tp == 0:
+                        macro_scores.append(0.0)
+                    else:
+                        fp = len(pr_m.difference(gt_m))
+                        fn = len(gt_m.difference(pr_m))
+                        p = tp / (tp + fp)
+                        r = tp / (tp + fn)
+                        macro_scores.append((1.25 * p * r) / (0.25 * p + r))
+                        total_tp += tp
+                        total_fp += fp
+        
+        macro_f05 = float(np.mean(macro_scores))
+        total_preds = sum(len(m) for m in pred_dict.values())
+        prec = total_tp / total_preds if total_preds > 0 else 0.0
+        rec = total_tp / val_gt_pairs if val_gt_pairs > 0 else 0.0
         denom = 0.25 * prec + rec
-        f05 = (1.25 * prec * rec) / denom if denom > 0 else 0.0
+        micro_f05 = (1.25 * prec * rec) / denom if denom > 0 else 0.0
 
-        print(f"{t:>10.3f} | {len(pred_pairs):>10,} | {tp:>8,} | {fp:>8,} | {prec*100:>9.2f}% | {rec*100:>7.2f}% | {f05:>10.4f}")
+        print(f"{t:>10.3f} | {total_preds:>10,} | {total_tp:>8,} | {total_fp:>8,} | {prec*100:>9.2f}% | {rec*100:>7.2f}% | {macro_f05:>10.4f} | {micro_f05:>10.4f}")
 
         sweep_results.append({
             "threshold": t,
-            "predictions": len(pred_pairs),
-            "true_positives": tp,
-            "false_positives": fp,
+            "predictions": total_preds,
+            "true_positives": total_tp,
+            "false_positives": total_fp,
             "precision": prec,
             "recall": rec,
-            "f0_5": f05,
+            "macro_f0_5": macro_f05,
+            "micro_f0_5": micro_f05,
         })
 
-        if f05 > best_f05:
-            best_f05 = f05
+        if macro_f05 > best_macro_f05:
+            best_macro_f05 = macro_f05
             best_thresh = t
             best_stats = sweep_results[-1]
 
-    print("=" * 80)
-    print(f"OPTIMAL VALIDATION F0.5 SCORE: {best_f05:.4f} at Threshold T = {best_thresh:.3f}")
-    print(f"Optimal Precision: {best_stats['precision']*100:.2f}% | Optimal Recall: {best_stats['recall']*100:.2f}%")
+    print("=" * 90)
+    print(f"OPTIMAL VALIDATION MACRO F0.5 SCORE: {best_macro_f05:.4f} at Threshold T = {best_thresh:.3f}")
+    print(f"Optimal Precision: {best_stats['precision']*100:.2f}% | Optimal Recall: {best_stats['recall']*100:.2f}% | Micro F0.5: {best_stats['micro_f0_5']:.4f}")
     print(f"False Positives: {best_stats['false_positives']:,} | True Positives: {best_stats['true_positives']:,}")
 
     # Write full report
