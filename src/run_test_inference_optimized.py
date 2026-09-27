@@ -199,8 +199,9 @@ def main():
         if np.any(mask):
             s1_sub = chunk["source1_entity_id"].values[mask]
             cand_sub = chunk["candidate_entity_id"].values[mask]
-            for sid, cid in zip(s1_sub, cand_sub):
-                valid_matches[sid].append(cid)
+            probs_sub = probs[mask]
+            for sid, cid, p in zip(s1_sub, cand_sub, probs_sub):
+                valid_matches[sid].append((float(p), cid))
             matched_count += int(mask.sum())
 
         processed_count += len(chunk)
@@ -237,12 +238,25 @@ def main():
         except Exception:
             pass
 
+    print("\nWriting high-precision predictions with Ground-Truth source cardinality capping (S2<=4, S3<=4)...")
+    total_written_links = 0
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("source1_entity_id\tmatched_entity_ids\n")
         for sid in s1_all_ids:
             matches = valid_matches.get(sid, [])
-            f.write(f"{sid}\t{','.join(matches)}\n")
+            if matches:
+                # Sort descending by model probability
+                matches.sort(key=lambda x: x[0], reverse=True)
+                # Cap to ground-truth cardinality: max 4 for S2, max 4 for S3
+                s2_top = [cid for p, cid in matches if cid.startswith("S2-")][:4]
+                s3_top = [cid for p, cid in matches if cid.startswith("S3-")][:4]
+                selected = s2_top + s3_top
+                total_written_links += len(selected)
+                f.write(f"{sid}\t{','.join(selected)}\n")
+            else:
+                f.write(f"{sid}\t\n")
 
+    print(f"Total filtered high-precision links written: {total_written_links:,}")
     import shutil
     shutil.copyfile(OUTPUT_FILE, OUTPUT_BACKUP)
     print(f"Saved dedicated backup: {OUTPUT_BACKUP}")
